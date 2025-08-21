@@ -1,40 +1,311 @@
 // main.cpp
+
 #include <iostream>
-#include <string_view>
-#include <print>
+#include <stdexcept>
+#include <set>
+#include <optional>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
-#include <GLFW/glfw3.h>
+#include <GLFW/glfw3.h> // 必须在vulkan.hpp之后include
 
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
+constexpr uint32_t WINDOW_WIDTH  = 800;
+constexpr uint32_t WINDOW_HEIGHT = 600;
 
-int main() {
-    // vulkan test
-    const vk::raii::Context context;
-    const auto extensions = context.enumerateInstanceExtensionProperties();
-    std::cout << "vulkan available extensions:" << std::endl;
-    for (const auto& extension : extensions) {
-        std::println("{}", std::string_view(extension.extensionName));
-    }
+constexpr std::array<const char*, 1> REQUIRED_LAYERS{
+	"VK_LAYER_KHRONOS_validation"
+};
 
-    // glm test
-    constexpr glm::mat4 matrix(1.0f);
-    constexpr glm::vec4 vec(1.0f, 2.0f, 3.0f, 4.0f);
-    constexpr glm::vec4 test = matrix * vec;
-    std::println("{} {} {} {}", test.x, test.y, test.z, test.w);
+constexpr std::array<const char*, 1> DEVICE_EXTENSIONS{
+	vk::KHRSwapchainExtensionName
+};
 
-    // glfw test
-    glfwInit();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-    }
-    glfwDestroyWindow(window);
-    glfwTerminate();
+#ifdef NDEBUG
+constexpr bool ENABLE_VALIDATION_LAYER = false;
+#else
+constexpr bool ENABLE_VALIDATION_LAYER = true;
+#endif
+
+static std::vector<const char*> getRequiredExtensions() {
+	uint32_t glfwExtensionCount = 0;
+	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+	std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+	extensions.emplace_back(vk::KHRPortabilityEnumerationExtensionName);
+	if constexpr (ENABLE_VALIDATION_LAYER) {
+		extensions.emplace_back(vk::EXTDebugUtilsExtensionName);
+	}
+	return extensions;
+}
+
+static VKAPI_ATTR uint32_t VKAPI_CALL debugMessageFunc(
+	vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
+	vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
+	vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
+	void* pUserData
+) {
+	std::println(std::cerr, "validation layer: {}", pCallbackData->pMessage);
+	return false;
+}
+
+static constexpr vk::DebugUtilsMessengerCreateInfoEXT populateDebugMessengerCreateInfo() {
+	constexpr vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+	);
+	constexpr vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags(
+		vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+		vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+		vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
+	);
+	return { {}, severityFlags, messageTypeFlags, &debugMessageFunc };
+}
+
+static bool checkDeviceExtensionSupport(const vk::raii::PhysicalDevice& physicalDevice) {
+	const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+	std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
+	for (const auto& extension : availableExtensions) {
+		requiredExtensions.erase(extension.extensionName);
+	}
+	return requiredExtensions.empty();
+}
+
+class HelloTriangle {
+
+public:
+
+	struct QueueFamilyIndices
+	{
+		std::optional<uint32_t> graphicsFamily;
+		std::optional<uint32_t> presentFamily;
+
+		bool isComplete() const {
+			return graphicsFamily.has_value() && presentFamily.has_value();
+		}
+	};
+
+	void run()
+	{
+		iniWindow();
+		initVulkan();
+		mainloop();
+		cleanup();
+	}
+
+private:
+	GLFWwindow* m_GLFWwindow{ nullptr };
+
+	/*
+	* 初始化 Vulkan Loader 自动加载全局函数指针
+	* 必须初始化，且只能初始化一次
+	* 可无参构造，且不可nullptr构造（特殊）
+	*/
+	vk::raii::Context m_Context; 
+	/*
+															   |--->  Physical Device
+															   |		
+	Vulkan App --->		|-------------------|  ---->  Vulkan ICD ---> Physical Device
+						|					|	      ^  
+						|                   |         |
+	Vulkan App --->		|    Vulkan Loader	|  --------
+						|					|
+	Vulkan App --->		|-------------------|  ---->  Vulkan ICD ---> Physical Device
+
+	*/
+
+	vk::raii::Instance m_Instance{ nullptr };
+	vk::raii::DebugUtilsMessengerEXT m_DebugMessenger{ nullptr };
+	vk::raii::SurfaceKHR m_Surface{ nullptr };
+	vk::raii::PhysicalDevice m_PhysicalDevice{ nullptr };
+	vk::raii::Device m_Device{ nullptr };
+	vk::raii::Queue m_GraphicsQueue{ nullptr };
+	vk::raii::Queue m_PresentQueue{ nullptr };
+
+	void iniWindow()
+	{
+		glfwInit();
+
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // 禁用默认的OpenGL backend
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);   // 暂时固定窗口大小
+		
+		m_GLFWwindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "HelloTriangle", nullptr, nullptr);
+	}
+
+	void initVulkan()
+	{
+		createInstance();
+		setupDebugMessenger();
+		createSurface();
+		selectPhysicalDevice();
+		createLogicalDevice();
+	}
+
+	void createInstance()
+	{
+		if constexpr (ENABLE_VALIDATION_LAYER) {
+			if (!checkValidationLayerSupport()) throw std::runtime_error("validation layer requested, but not available!");
+		}
+
+		vk::ApplicationInfo applicationInfo;
+		applicationInfo
+			.setPApplicationName("Hello Triangle")
+			.setApplicationVersion(1)
+			.setPEngineName("No Engine")
+			.setEngineVersion(1)
+			.setApiVersion(vk::makeApiVersion(0, 1, 4, 0));
+		
+		vk::InstanceCreateInfo createInfo;
+		createInfo
+			.setFlags({})
+			.setPApplicationInfo(&applicationInfo);
+
+		std::vector<const char*> requiredExtensions = getRequiredExtensions();
+		createInfo.setPEnabledExtensionNames(requiredExtensions); //一次性设置 Extension Count 和 Extension Name
+		createInfo.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
+
+		constexpr auto debugMessengerCreateInfo = populateDebugMessengerCreateInfo();
+		if  constexpr (ENABLE_VALIDATION_LAYER) {
+			createInfo.setPEnabledLayerNames(REQUIRED_LAYERS);
+			createInfo.pNext = &debugMessengerCreateInfo;
+		}
+
+		m_Instance = m_Context.createInstance(createInfo);
+	}
+
+	void setupDebugMessenger() 
+	{
+		if constexpr (!ENABLE_VALIDATION_LAYER) return;
+		constexpr auto createInfo = populateDebugMessengerCreateInfo();
+		m_DebugMessenger = m_Instance.createDebugUtilsMessengerEXT(createInfo);
+	}
+
+	void createSurface()
+	{
+		VkSurfaceKHR cSurface;
+		if (glfwCreateWindowSurface(*m_Instance, m_GLFWwindow, nullptr, &cSurface) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create window surface");
+		}
+		
+		m_Surface = vk::raii::SurfaceKHR(m_Instance, cSurface);
+	}
+
+	void selectPhysicalDevice()
+	{
+		const auto physicalDevices = m_Instance.enumeratePhysicalDevices();
+		if (physicalDevices.empty()) {
+			throw std::runtime_error("failed to find GPUs with Vulkan support!");
+		}
+
+		for (const auto& it : physicalDevices) {
+			if (isDeviceSuitable(it)) {
+				m_PhysicalDevice = it;
+				break;
+			}
+		}
+
+		if (m_PhysicalDevice == nullptr) {
+			throw std::runtime_error("failed to find a suitable GPU!");
+		}
+	}
+
+	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
+	{
+		const auto indices = findQueueFamilies(physicalDevice);
+		const bool extensionsSupported = checkDeviceExtensionSupport(physicalDevice);
+
+
+		return indices.isComplete() && extensionsSupported;
+	}
+
+	QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& physicalDevice) const
+	{
+		QueueFamilyIndices indices;
+		
+		// 找Graphics Queue
+		const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+		for (int ii = 0; const auto& queueFamilies : queueFamilies) {
+			if (queueFamilies.queueFlags & vk::QueueFlagBits::eGraphics) {
+				indices.graphicsFamily = ii;
+			}
+
+			if (physicalDevice.getSurfaceSupportKHR(ii, m_Surface)) {
+				indices.presentFamily = ii;
+			}
+
+			if (indices.isComplete()) break;
+
+			++ii;
+		}
+
+		return indices;
+	}
+
+	void createLogicalDevice()
+	{
+		std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
+		const auto [graphics, present] = findQueueFamilies(m_PhysicalDevice);
+		std::set<uint32_t> uniqueQueueFamilies = { graphics.value(), present.value() };
+		
+		constexpr float queuePriority = 1.0f;
+		for (uint32_t queueFamily : uniqueQueueFamilies) {
+			vk::DeviceQueueCreateInfo queueCreateInfo;
+			queueCreateInfo.queueFamilyIndex = queueFamily;
+			queueCreateInfo.setQueuePriorities(queuePriority);
+			queueCreateInfos.emplace_back(queueCreateInfo);
+		}
+
+		vk::PhysicalDeviceFeatures deviceFeatures;
+
+		vk::DeviceCreateInfo createInfo;
+		createInfo.setQueueCreateInfos(queueCreateInfos)
+			.setPEnabledFeatures(&deviceFeatures)
+			.setPEnabledExtensionNames(DEVICE_EXTENSIONS);
+
+		m_Device = m_PhysicalDevice.createDevice(createInfo);
+		m_GraphicsQueue = m_Device.getQueue(graphics.value(), 0);
+		m_PresentQueue = m_Device.getQueue(present.value(), 0);
+	}
+
+	void mainloop()
+	{
+		while (!glfwWindowShouldClose(m_GLFWwindow))
+		{
+			glfwPollEvents();
+		}
+	}
+
+	void cleanup()
+	{
+		glfwDestroyWindow(m_GLFWwindow);
+		glfwTerminate();
+	}
+
+	bool checkValidationLayerSupport() const {
+		const auto layers = m_Context.enumerateInstanceLayerProperties();
+		std::set<std::string> requiredLayers(REQUIRED_LAYERS.begin(), REQUIRED_LAYERS.end());
+		for (const auto& layer : layers) {
+			requiredLayers.erase(layer.layerName);
+		}
+		return requiredLayers.empty();
+	}
+};
+
+
+int main()
+{
+	try
+	{
+		HelloTriangle app;
+		app.run();
+	}
+	catch (const vk::SystemError& err)
+	{
+		std::println(std::cerr, "vk::SystemError -- code : {} ", err.code().message());
+		std::println(std::cerr, "vk::SystemError -- what : {} ", err.what());
+	}
+	catch (const std::exception& err)
+	{
+		std::println(std::cerr, "Standard exception: {}", err.what());
+	}
 }
