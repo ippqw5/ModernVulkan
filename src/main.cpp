@@ -152,6 +152,7 @@ private:
 	std::vector<vk::Image> m_SwapChainImages;
 	vk::Format m_SwapChainImageFormat{};
 	vk::Extent2D m_SwapChainExtent{};
+	std::vector<vk::raii::ImageView> m_SwapChainImageViews;
 
 	void iniWindow()
 	{
@@ -171,6 +172,7 @@ private:
 		selectPhysicalDevice();
 		createLogicalDevice();
 		createSwapChain();
+		createImageViews();
 	}
 
 	void createInstance()
@@ -310,6 +312,30 @@ private:
 		m_SwapChainImageFormat = surfaceFormat.format;
 	}
 
+	void createImageViews()
+	{
+		//不能用resize，因为vk::raii::ImageView没有无参构造。用reserve仅分配空间，不实例化
+		m_SwapChainImageViews.reserve(m_SwapChainImages.size());
+
+		for (const auto& image : m_SwapChainImages)
+		{
+			vk::ImageViewCreateInfo createInfo;
+			createInfo.setImage(image)
+				.setViewType(vk::ImageViewType::e2D)
+				.setFormat(m_SwapChainImageFormat);
+
+			vk::ImageSubresourceRange range;
+			range.setAspectMask(vk::ImageAspectFlagBits::eColor)
+				.setBaseMipLevel(0)
+				.setLevelCount(1)
+				.setBaseArrayLayer(0)
+				.setLayerCount(1);
+
+			createInfo.setSubresourceRange(range);
+			
+			m_SwapChainImageViews.emplace_back(m_Device.createImageView(createInfo));
+		}
+	}
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
