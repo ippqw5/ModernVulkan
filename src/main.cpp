@@ -154,6 +154,9 @@ private:
 	vk::Extent2D m_SwapChainExtent{};
 	std::vector<vk::raii::ImageView> m_SwapChainImageViews;
 
+	vk::raii::RenderPass m_RenderPass{ nullptr };
+	std::vector<vk::raii::Framebuffer> m_SwapChainFramebuffers;
+
 	void iniWindow()
 	{
 		glfwInit();
@@ -173,6 +176,8 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createRenderPass();
+		createFrameBuffers();
 	}
 
 	void createInstance()
@@ -334,6 +339,48 @@ private:
 			createInfo.setSubresourceRange(range);
 			
 			m_SwapChainImageViews.emplace_back(m_Device.createImageView(createInfo));
+		}
+	}
+
+	void createRenderPass()
+	{
+		vk::AttachmentDescription colorAttachment;
+		colorAttachment.format = m_SwapChainImageFormat;
+		colorAttachment.samples = vk::SampleCountFlagBits::e1;
+		colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+		colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+		colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+		colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+		colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
+		colorAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+		vk::AttachmentReference colorAttachmentRef;
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+		vk::SubpassDescription subpass;
+		subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+
+		subpass.setColorAttachments(colorAttachmentRef);
+
+		vk::RenderPassCreateInfo renderPassInfo;
+		renderPassInfo.setAttachments(colorAttachment);
+		renderPassInfo.setSubpasses(subpass);
+
+		m_RenderPass = m_Device.createRenderPass(renderPassInfo);
+	}
+
+	void createFrameBuffers()
+	{
+		m_SwapChainFramebuffers.reserve(m_SwapChainImageViews.size());
+		vk::FramebufferCreateInfo framebufferInfo;
+		framebufferInfo.renderPass = m_RenderPass;
+		framebufferInfo.width = m_SwapChainExtent.width;
+		framebufferInfo.height = m_SwapChainExtent.height;
+		framebufferInfo.layers = 1;
+		for (const auto& imageView : m_SwapChainImageViews) {
+			framebufferInfo.setAttachments(*imageView);
+			m_SwapChainFramebuffers.emplace_back(m_Device.createFramebuffer(framebufferInfo));
 		}
 	}
 private:
