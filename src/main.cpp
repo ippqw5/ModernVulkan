@@ -33,6 +33,7 @@ static std::vector<char> readFile(const std::string& filename) {
 
 constexpr uint32_t WINDOW_WIDTH  = 800;
 constexpr uint32_t WINDOW_HEIGHT = 600;
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 constexpr std::array<const char*, 1> REQUIRED_LAYERS{
 	"VK_LAYER_KHRONOS_validation"
@@ -47,68 +48,6 @@ constexpr bool ENABLE_VALIDATION_LAYER = false;
 #else
 constexpr bool ENABLE_VALIDATION_LAYER = true;
 #endif
-
-static std::vector<const char*> getRequiredExtensions() {
-	uint32_t glfwExtensionCount = 0;
-	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-	std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-	extensions.emplace_back(vk::KHRPortabilityEnumerationExtensionName);
-	if constexpr (ENABLE_VALIDATION_LAYER) {
-		extensions.emplace_back(vk::EXTDebugUtilsExtensionName);
-	}
-	return extensions;
-}
-
-static VKAPI_ATTR uint32_t VKAPI_CALL debugMessageFunc(
-	vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
-	vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
-	vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
-	void* pUserData
-) {
-	std::println(std::cerr, "validation layer: {}", pCallbackData->pMessage);
-	return false;
-}
-
-static constexpr vk::DebugUtilsMessengerCreateInfoEXT populateDebugMessengerCreateInfo() {
-	constexpr vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
-		vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-		vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-		vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
-	);
-	constexpr vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags(
-		vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-		vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-		vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
-	);
-	return { {}, severityFlags, messageTypeFlags, &debugMessageFunc };
-}
-
-static bool checkDeviceExtensionSupport(const vk::raii::PhysicalDevice& physicalDevice) {
-	const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
-	std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
-	for (const auto& extension : availableExtensions) {
-		requiredExtensions.erase(extension.extensionName);
-	}
-	return requiredExtensions.empty();
-}
-
-static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
-	for (const auto& availableFormat : availableFormats) {
-		if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
-			availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear
-			) return availableFormat;
-	}
-	return availableFormats.at(0);
-}
-
-static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
-	for (const auto& availablePresentMode : availablePresentModes) {
-		if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
-			return availablePresentMode;
-		}
-	}
-	return vk::PresentModeKHR::eFifo;
-}
 
 class HelloTriangle {
 
@@ -130,9 +69,73 @@ public:
 		std::vector<vk::PresentModeKHR> presentModes;
 	};
 
+	static std::vector<const char*> getRequiredExtensions() {
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+		std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+		extensions.emplace_back(vk::KHRPortabilityEnumerationExtensionName);
+		if constexpr (ENABLE_VALIDATION_LAYER) {
+			extensions.emplace_back(vk::EXTDebugUtilsExtensionName);
+		}
+		return extensions;
+	}
+
+	static VKAPI_ATTR uint32_t VKAPI_CALL debugMessageFunc(
+		vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
+		vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
+		vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
+		void* pUserData
+	) {
+		std::println(std::cerr, "validation layer: {}", pCallbackData->pMessage);
+		return false;
+	}
+
+	static constexpr vk::DebugUtilsMessengerCreateInfoEXT populateDebugMessengerCreateInfo() {
+		constexpr vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
+			vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+			vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+			vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+		);
+		constexpr vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags(
+			vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
+		);
+		return { {}, severityFlags, messageTypeFlags, &debugMessageFunc };
+	}
+
+	static bool checkDeviceExtensionSupport(const vk::raii::PhysicalDevice& physicalDevice) {
+		const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+		std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
+		for (const auto& extension : availableExtensions) {
+			requiredExtensions.erase(extension.extensionName);
+		}
+		return requiredExtensions.empty();
+	}
+
+	static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
+		for (const auto& availableFormat : availableFormats) {
+			if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
+				availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear
+				) return availableFormat;
+		}
+		return availableFormats.at(0);
+	}
+
+	static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
+		for (const auto& availablePresentMode : availablePresentModes) {
+			if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+				return availablePresentMode;
+			}
+		}
+		return vk::PresentModeKHR::eFifo;
+	}
+
+
+public:
 	void run()
 	{
-		iniWindow();
+		initWindow();
 		initVulkan();
 		mainloop();
 		cleanup();
@@ -178,14 +181,31 @@ private:
 	vk::raii::PipelineLayout m_PipelineLayout{ nullptr };
 	vk::raii::Pipeline m_GraphicsPipeline{ nullptr };
 
-	void iniWindow()
+	vk::raii::CommandPool m_CommandPool{ nullptr };
+	std::vector<vk::raii::CommandBuffer> m_CommandBuffers;
+
+	std::vector<vk::raii::Semaphore> m_ImageAvailableSemaphores;
+	std::vector<vk::raii::Semaphore> m_RenderFinishedSemaphores;
+	std::vector<vk::raii::Fence> m_InFlightFences;
+
+	uint32_t m_CurrentFrame = 0;
+	bool m_FramebufferResized = false;
+
+	void initWindow()
 	{
 		glfwInit();
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // 禁用默认的OpenGL backend
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);   // 暂时固定窗口大小
 		
 		m_GLFWwindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "HelloTriangle", nullptr, nullptr);
+		
+		glfwSetWindowUserPointer(m_GLFWwindow, this);
+		glfwSetFramebufferSizeCallback(m_GLFWwindow, framebufferResizeCallback);
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+		const auto app = static_cast<HelloTriangle*>(glfwGetWindowUserPointer(window));
+		app->m_FramebufferResized = true;
 	}
 
 	void initVulkan()
@@ -198,8 +218,11 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
-		createFrameBuffers();
+		createFramebuffers();
 		createGraphicsPipeline();
+		createCommandPool();
+		createCommandBuffers();
+		createSyncObjects();
 	}
 
 	void createInstance()
@@ -389,10 +412,21 @@ private:
 		renderPassInfo.setAttachments(colorAttachment);
 		renderPassInfo.setSubpasses(subpass);
 
+		vk::SubpassDependency dependency;
+		dependency.srcSubpass = vk::SubpassExternal;
+		dependency.dstSubpass = 0;
+
+		dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+		dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+
+		dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+		dependency.srcAccessMask = {};
+		renderPassInfo.setDependencies(dependency);
+
 		m_RenderPass = m_Device.createRenderPass(renderPassInfo);
 	}
 
-	void createFrameBuffers()
+	void createFramebuffers()
 	{
 		m_SwapChainFramebuffers.reserve(m_SwapChainImageViews.size());
 		vk::FramebufferCreateInfo framebufferInfo;
@@ -480,6 +514,40 @@ private:
 		pipelineInfo.basePipelineIndex = -1; // Optional
 		m_GraphicsPipeline = m_Device.createGraphicsPipeline(nullptr, pipelineInfo);
 	}
+
+	void createCommandPool()
+	{
+		const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_PhysicalDevice);
+
+		vk::CommandPoolCreateInfo poolInfo;
+		poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+		poolInfo.queueFamilyIndex = graphicsFamily.value();
+
+		m_CommandPool = m_Device.createCommandPool(poolInfo);
+
+	}
+
+	void createCommandBuffers() {
+		vk::CommandBufferAllocateInfo allocInfo;
+		allocInfo.commandPool = m_CommandPool;
+		allocInfo.level = vk::CommandBufferLevel::ePrimary;
+		allocInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
+
+		m_CommandBuffers = m_Device.allocateCommandBuffers(allocInfo);
+	}
+
+	void createSyncObjects() {
+		constexpr vk::SemaphoreCreateInfo semaphoreInfo;
+		constexpr vk::FenceCreateInfo fenceInfo(
+			vk::FenceCreateFlagBits::eSignaled  // flags
+		);
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+			m_ImageAvailableSemaphores.emplace_back(m_Device.createSemaphore(semaphoreInfo));
+			m_RenderFinishedSemaphores.emplace_back(m_Device.createSemaphore(semaphoreInfo));
+			m_InFlightFences.emplace_back(m_Device.createFence(fenceInfo));
+		}
+	}
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
@@ -566,19 +634,130 @@ private:
 		return m_Device.createShaderModule(createInfo);
 	}
 
+	void recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex) const {
+		constexpr vk::CommandBufferBeginInfo beginInfo;
+		commandBuffer.begin(beginInfo);
+
+		vk::RenderPassBeginInfo renderPassInfo;
+		renderPassInfo.renderPass = m_RenderPass;
+		renderPassInfo.framebuffer = m_SwapChainFramebuffers[imageIndex];
+		renderPassInfo.renderArea.offset = vk::Offset2D{ 0, 0 };
+		renderPassInfo.renderArea.extent = m_SwapChainExtent;
+		constexpr vk::ClearValue clearColor(vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f));
+		renderPassInfo.setClearValues(clearColor);
+
+		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_GraphicsPipeline);
+
+		const vk::Viewport viewport(
+			0.0f, 0.0f, // x, y
+			static_cast<float>(m_SwapChainExtent.width),    // width
+			static_cast<float>(m_SwapChainExtent.height),   // height
+			0.0f, 1.0f  // minDepth maxDepth
+		);
+		commandBuffer.setViewport(0, viewport);
+
+		const vk::Rect2D scissor(
+			vk::Offset2D{ 0, 0 }, // offset
+			m_SwapChainExtent   // extent
+		);
+		commandBuffer.setScissor(0, scissor);
+
+		commandBuffer.draw(3, 1, 0, 0);
+
+		commandBuffer.endRenderPass();
+		commandBuffer.end();
+	}
+
+	void recreateSwapChain() {
+
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(m_GLFWwindow, &width, &height);
+		while (width == 0 || height == 0) {
+			glfwGetFramebufferSize(m_GLFWwindow, &width, &height);
+			glfwWaitEvents();
+		}
+		m_Device.waitIdle();
+
+		m_SwapChainFramebuffers.clear();
+		m_SwapChainImageViews.clear();
+		m_SwapChainImages.clear(); // optional
+		m_SwapChain = nullptr;
+
+		createSwapChain();
+		createImageViews();
+		createFramebuffers();
+
+		m_FramebufferResized = false;
+	}
 private:
 	void mainloop()
 	{
 		while (!glfwWindowShouldClose(m_GLFWwindow))
 		{
 			glfwPollEvents();
+			drawFrame();
 		}
+
+		m_Device.waitIdle();
 	}
 	
 	void cleanup()
 	{
 		glfwDestroyWindow(m_GLFWwindow);
 		glfwTerminate();
+	}
+
+	void drawFrame() {
+		if (const auto res = m_Device.waitForFences(*m_InFlightFences[m_CurrentFrame], true, std::numeric_limits<uint64_t>::max());
+			res != vk::Result::eSuccess
+			) throw std::runtime_error{ "waitForFences in drawFrame was failed" };
+
+		uint32_t imageIndex;
+		try {
+			// std::pair<vk::Result, uint32_t>
+			const auto [res, idx] = m_SwapChain.acquireNextImage(UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame]);
+			imageIndex = idx;
+		}
+		catch (const vk::OutOfDateKHRError&) {
+			recreateSwapChain();
+			return;
+		} // Do not catch other exceptions
+
+		m_Device.resetFences(*m_InFlightFences[m_CurrentFrame]);
+
+		m_CommandBuffers[m_CurrentFrame].reset();
+		recordCommandBuffer(m_CommandBuffers[m_CurrentFrame], imageIndex);
+
+		vk::SubmitInfo submitInfo;
+		submitInfo.setWaitSemaphores(*m_ImageAvailableSemaphores[m_CurrentFrame]);
+		std::array<vk::PipelineStageFlags, 1> waitStages = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+		submitInfo.setWaitDstStageMask(waitStages);
+		submitInfo.setCommandBuffers(*m_CommandBuffers[m_CurrentFrame]);
+
+		submitInfo.setSignalSemaphores(*m_RenderFinishedSemaphores[m_CurrentFrame]);
+		m_GraphicsQueue.submit(submitInfo, m_InFlightFences[m_CurrentFrame]);
+
+		vk::PresentInfoKHR presentInfo;
+		presentInfo.setWaitSemaphores(*m_RenderFinishedSemaphores[m_CurrentFrame]);
+		presentInfo.setSwapchains(*m_SwapChain);
+		presentInfo.pImageIndices = &imageIndex;
+		try {
+			const auto res = m_PresentQueue.presentKHR(presentInfo);
+			if (res == vk::Result::eSuboptimalKHR) {
+				recreateSwapChain();
+			}
+		}
+		catch (const vk::OutOfDateKHRError&) {
+			recreateSwapChain();
+		} // Do not catch other exceptions
+
+		if (m_FramebufferResized) {
+			recreateSwapChain();
+		}
+
+		m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 };
 
