@@ -25,3 +25,5 @@ add_executable(${PROJECT_NAME} src/main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan )
 target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm )
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw )
+
+add_subdirectory(shaders)

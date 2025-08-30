@@ -6,11 +6,30 @@
 #include <optional>
 #include <limits>
 #include <algorithm>
+#include <fstream>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <GLFW/glfw3.h> // 必须在vulkan.hpp之后include
+
+static std::vector<char> readFile(const std::string& filename) {
+	std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+	if (!file.is_open()) {
+		throw std::runtime_error("failed to open file!");
+	}
+
+	const size_t fileSize = file.tellg();
+	std::vector<char> buffer(fileSize);
+
+	file.seekg(0);
+	file.read(buffer.data(), fileSize);
+
+	file.close(); // optional
+
+	return buffer;
+}
 
 constexpr uint32_t WINDOW_WIDTH  = 800;
 constexpr uint32_t WINDOW_HEIGHT = 600;
@@ -156,6 +175,8 @@ private:
 
 	vk::raii::RenderPass m_RenderPass{ nullptr };
 	std::vector<vk::raii::Framebuffer> m_SwapChainFramebuffers;
+	vk::raii::PipelineLayout m_PipelineLayout{ nullptr };
+	vk::raii::Pipeline m_GraphicsPipeline{ nullptr };
 
 	void iniWindow()
 	{
@@ -178,6 +199,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createFrameBuffers();
+		createGraphicsPipeline();
 	}
 
 	void createInstance()
@@ -383,6 +405,81 @@ private:
 			m_SwapChainFramebuffers.emplace_back(m_Device.createFramebuffer(framebufferInfo));
 		}
 	}
+
+	void createGraphicsPipeline() {
+		const auto vertShaderCode = readFile("shaders/graphics.vert.spv");
+		const auto fragShaderCode = readFile("shaders/graphics.frag.spv");
+
+		vk::raii::ShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		vk::raii::ShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+	
+		vk::PipelineShaderStageCreateInfo vertShaderStageInfo;
+		vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		vk::PipelineShaderStageCreateInfo fragShaderStageInfo;
+		fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		const auto shaderStages = { vertShaderStageInfo, fragShaderStageInfo };
+
+		const auto dynamicStates = {
+			vk::DynamicState::eViewport,
+			vk::DynamicState::eScissor
+		};
+		vk::PipelineDynamicStateCreateInfo dynamicState;
+		dynamicState.setDynamicStates(dynamicStates);
+		
+		vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+		vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
+		inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+		
+		vk::PipelineViewportStateCreateInfo viewportState;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+		
+		vk::PipelineRasterizationStateCreateInfo rasterizer;
+		rasterizer.polygonMode = vk::PolygonMode::eFill;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+		rasterizer.frontFace = vk::FrontFace::eClockwise;
+		
+		vk::PipelineMultisampleStateCreateInfo multisampling;
+		multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+		multisampling.sampleShadingEnable = false;
+		
+		vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+		colorBlendAttachment.blendEnable = false; // default
+		colorBlendAttachment.colorWriteMask = vk::FlagTraits<vk::ColorComponentFlagBits>::allFlags;
+		
+		vk::PipelineColorBlendStateCreateInfo colorBlending;
+		colorBlending.logicOpEnable = false;
+		colorBlending.logicOp = vk::LogicOp::eCopy;
+		colorBlending.setAttachments(colorBlendAttachment);
+		
+		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+		m_PipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
+		
+
+		vk::GraphicsPipelineCreateInfo pipelineInfo;
+		pipelineInfo.setStages(shaderStages);
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = m_PipelineLayout;
+		pipelineInfo.renderPass = m_RenderPass;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = nullptr; // Optional
+		pipelineInfo.basePipelineIndex = -1; // Optional
+		m_GraphicsPipeline = m_Device.createGraphicsPipeline(nullptr, pipelineInfo);
+	}
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
@@ -460,6 +557,13 @@ private:
 		actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
 		actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 		return actualExtent;
+	}
+
+	vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
+		vk::ShaderModuleCreateInfo createInfo;
+		createInfo.codeSize = code.size();
+		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+		return m_Device.createShaderModule(createInfo);
 	}
 
 private:
