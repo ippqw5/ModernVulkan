@@ -55,9 +55,10 @@ struct QueueFamilyIndices
 {
 	std::optional<uint32_t> graphicsFamily;
 	std::optional<uint32_t> presentFamily;
+	std::optional<uint32_t> transferFamily;
 
 	bool isComplete() const {
-		return graphicsFamily.has_value() && presentFamily.has_value();
+		return graphicsFamily.has_value() && presentFamily.has_value() && transferFamily.has_value();
 	}
 };
 
@@ -199,8 +200,10 @@ private:
 	vk::raii::SurfaceKHR m_Surface{ nullptr };
 	vk::raii::PhysicalDevice m_PhysicalDevice{ nullptr };
 	vk::raii::Device m_Device{ nullptr };
+	QueueFamilyIndices m_QueueFamilyIndics;
 	vk::raii::Queue m_GraphicsQueue{ nullptr };
 	vk::raii::Queue m_PresentQueue{ nullptr };
+	vk::raii::Queue m_TransferQueue{ nullptr };
 
 	vk::raii::SwapchainKHR m_SwapChain{ nullptr };
 	std::vector<vk::Image> m_SwapChainImages;
@@ -214,6 +217,7 @@ private:
 	vk::raii::Pipeline m_GraphicsPipeline{ nullptr };
 
 	vk::raii::CommandPool m_CommandPool{ nullptr };
+	vk::raii::CommandPool m_TransferCommandPool{ nullptr };
 	std::vector<vk::raii::CommandBuffer> m_CommandBuffers;
 
 	vk::raii::DeviceMemory m_VertexBufferMemory{ nullptr };
@@ -256,6 +260,7 @@ private:
 		createFramebuffers();
 		createGraphicsPipeline();
 		createCommandPool();
+		createTransferCommandPool();
 		createCommandBuffers();
 		createSyncObjects();
 		createVertexBuffer();
@@ -332,8 +337,8 @@ private:
 	void createLogicalDevice()
 	{
 		std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
-		const auto [graphics, present] = findQueueFamilies(m_PhysicalDevice);
-		std::set<uint32_t> uniqueQueueFamilies = { graphics.value(), present.value() };
+		const auto [graphics, present, transfer] = findQueueFamilies(m_PhysicalDevice);
+		std::set<uint32_t> uniqueQueueFamilies = { graphics.value(), present.value(), transfer.value() };
 		
 		constexpr float queuePriority = 1.0f;
 		for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -353,6 +358,7 @@ private:
 		m_Device = m_PhysicalDevice.createDevice(createInfo);
 		m_GraphicsQueue = m_Device.getQueue(graphics.value(), 0);
 		m_PresentQueue = m_Device.getQueue(present.value(), 0);
+		m_TransferQueue = m_Device.getQueue(transfer.value(), 0);
 	}
 
 	void createSwapChain()
@@ -377,7 +383,7 @@ private:
 			.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment)
 			.setImageArrayLayers(1);
 
-		const auto [graphics, present] = findQueueFamilies(m_PhysicalDevice);
+		const auto [graphics, present, transfer] = findQueueFamilies(m_PhysicalDevice);
 		std::vector<uint32_t> queueFamilyIndices{ graphics.value(), present.value() };
 		if (graphics != present) {
 			createInfo.setImageSharingMode(vk::SharingMode::eConcurrent);
@@ -558,7 +564,7 @@ private:
 
 	void createCommandPool()
 	{
-		const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_PhysicalDevice);
+		const auto [graphicsFamily, presentFamily, transferFamily] = findQueueFamilies(m_PhysicalDevice);
 
 		vk::CommandPoolCreateInfo poolInfo;
 		poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -566,6 +572,17 @@ private:
 
 		m_CommandPool = m_Device.createCommandPool(poolInfo);
 
+	}
+
+	void createTransferCommandPool()
+	{
+		const auto [graphics, present, transfer] = findQueueFamilies(m_PhysicalDevice);
+
+		vk::CommandPoolCreateInfo poolInfo;
+		poolInfo.flags = vk::CommandPoolCreateFlagBits::eTransient;
+		poolInfo.queueFamilyIndex = transfer.value();
+
+		m_TransferCommandPool = m_Device.createCommandPool(poolInfo);
 	}
 
 	void createCommandBuffers() {
@@ -646,18 +663,36 @@ private:
 		
 		// 找Graphics Queue
 		const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
-		for (int ii = 0; const auto& queueFamilies : queueFamilies) {
-			if (queueFamilies.queueFlags & vk::QueueFlagBits::eGraphics) {
-				indices.graphicsFamily = ii;
+
+		// 找Transfer专用队列
+		for (int i = 0; const auto& queueFamily : queueFamilies)
+		{
+			if ((queueFamily.queueFlags & vk::QueueFlagBits::eTransfer) &&
+				!(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)) 
+			{	
+				indices.transferFamily = i;
+				break;
+			}
+			i++;
+		}
+
+		// 找Graphics和Present队列
+		for (int i = 0; const auto& queueFamily : queueFamilies) {
+			if ((queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)) 
+			{
+				indices.graphicsFamily = i;
+
+				if (!indices.transferFamily.has_value())
+					indices.transferFamily = i;
 			}
 
-			if (physicalDevice.getSurfaceSupportKHR(ii, m_Surface)) {
-				indices.presentFamily = ii;
+			if (physicalDevice.getSurfaceSupportKHR(i, m_Surface)) {
+				indices.presentFamily = i;
 			}
 
 			if (indices.isComplete()) break;
 
-			++ii;
+			++i;
 		}
 
 		return indices;
@@ -786,10 +821,20 @@ private:
 		vk::raii::DeviceMemory& bufferMemory
 	)
 	{
+		const auto [graphics, present, transfer] = findQueueFamilies(m_PhysicalDevice);
+
 		vk::BufferCreateInfo bufferInfo;
 		bufferInfo.size = size;
 		bufferInfo.usage = usage;
-		bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+		
+		if (graphics.value() != transfer.value()) {
+			std::vector<uint32_t> queueFamilyIndices = { graphics.value(), transfer.value() };
+			bufferInfo.sharingMode = vk::SharingMode::eConcurrent;
+			bufferInfo.setQueueFamilyIndices(queueFamilyIndices);
+		}
+		else {
+			bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+		}
 
 		buffer = m_Device.createBuffer(bufferInfo);
 
@@ -809,7 +854,7 @@ private:
 		// 创建临时CommandBuffer来拷贝  srcBuffer --> dstBuffer
 		vk::CommandBufferAllocateInfo allocInfo;
 		allocInfo.level = vk::CommandBufferLevel::ePrimary;
-		allocInfo.commandPool = m_CommandPool;
+		allocInfo.commandPool = m_TransferCommandPool;
 		allocInfo.commandBufferCount = 1;
 
 		auto commandBuffers = m_Device.allocateCommandBuffers(allocInfo);
@@ -831,8 +876,8 @@ private:
 		vk::SubmitInfo submitInfo;
 		submitInfo.setCommandBuffers(*commandBuffer);
 
-		m_GraphicsQueue.submit(submitInfo);
-		m_GraphicsQueue.waitIdle();
+		m_TransferQueue.submit(submitInfo);
+		m_TransferQueue.waitIdle();
 	}
 private:
 	void mainloop()
