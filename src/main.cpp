@@ -13,6 +13,8 @@
 
 #include <GLFW/glfw3.h> // 必须在vulkan.hpp之后include
 
+#include <glm/glm.hpp>
+
 static std::vector<char> readFile(const std::string& filename) {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
@@ -49,88 +51,118 @@ constexpr bool ENABLE_VALIDATION_LAYER = false;
 constexpr bool ENABLE_VALIDATION_LAYER = true;
 #endif
 
+struct QueueFamilyIndices
+{
+	std::optional<uint32_t> graphicsFamily;
+	std::optional<uint32_t> presentFamily;
+
+	bool isComplete() const {
+		return graphicsFamily.has_value() && presentFamily.has_value();
+	}
+};
+
+struct SwapChainSupportDetails {
+	vk::SurfaceCapabilitiesKHR capabilities;
+	std::vector<vk::SurfaceFormatKHR>  formats;
+	std::vector<vk::PresentModeKHR> presentModes;
+};
+
+struct Vertex {
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	static vk::VertexInputBindingDescription getBindingDescription() {
+		vk::VertexInputBindingDescription bindingDescription;
+		bindingDescription.binding = 0;
+		bindingDescription.inputRate = vk::VertexInputRate::eVertex;
+		bindingDescription.stride = sizeof(Vertex);
+		return bindingDescription;
+	}
+
+	static std::array<vk::VertexInputAttributeDescription, 2>  getAttributeDescriptions() {
+		std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions;
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);
+		attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].offset = offsetof(Vertex, color);
+		attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
+
+		return attributeDescriptions;
+	}
+};
+
+const std::vector<Vertex> vertices = {
+	{{0.0f, -0.5f}, {0.0f, 0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
+
+static std::vector<const char*> getRequiredExtensions() {
+	uint32_t glfwExtensionCount = 0;
+	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+	std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+	extensions.emplace_back(vk::KHRPortabilityEnumerationExtensionName);
+	if constexpr (ENABLE_VALIDATION_LAYER) {
+		extensions.emplace_back(vk::EXTDebugUtilsExtensionName);
+	}
+	return extensions;
+}
+
+static VKAPI_ATTR uint32_t VKAPI_CALL debugMessageFunc(
+	vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
+	vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
+	vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
+	void* pUserData
+) {
+	std::println(std::cerr, "validation layer: {}", pCallbackData->pMessage);
+	return false;
+}
+
+static constexpr vk::DebugUtilsMessengerCreateInfoEXT populateDebugMessengerCreateInfo() {
+	constexpr vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+	);
+	constexpr vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags(
+		vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+		vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+		vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
+	);
+	return { {}, severityFlags, messageTypeFlags, &debugMessageFunc };
+}
+
+static bool checkDeviceExtensionSupport(const vk::raii::PhysicalDevice& physicalDevice) {
+	const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
+	std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
+	for (const auto& extension : availableExtensions) {
+		requiredExtensions.erase(extension.extensionName);
+	}
+	return requiredExtensions.empty();
+}
+
+static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
+	for (const auto& availableFormat : availableFormats) {
+		if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
+			availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear
+			) return availableFormat;
+	}
+	return availableFormats.at(0);
+}
+
+static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
+	for (const auto& availablePresentMode : availablePresentModes) {
+		if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+			return availablePresentMode;
+		}
+	}
+	return vk::PresentModeKHR::eFifo;
+}
+
 class HelloTriangle {
-
-public:
-
-	struct QueueFamilyIndices
-	{
-		std::optional<uint32_t> graphicsFamily;
-		std::optional<uint32_t> presentFamily;
-
-		bool isComplete() const {
-			return graphicsFamily.has_value() && presentFamily.has_value();
-		}
-	};
-
-	struct SwapChainSupportDetails {
-		vk::SurfaceCapabilitiesKHR capabilities;
-		std::vector<vk::SurfaceFormatKHR>  formats;
-		std::vector<vk::PresentModeKHR> presentModes;
-	};
-
-	static std::vector<const char*> getRequiredExtensions() {
-		uint32_t glfwExtensionCount = 0;
-		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-		std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-		extensions.emplace_back(vk::KHRPortabilityEnumerationExtensionName);
-		if constexpr (ENABLE_VALIDATION_LAYER) {
-			extensions.emplace_back(vk::EXTDebugUtilsExtensionName);
-		}
-		return extensions;
-	}
-
-	static VKAPI_ATTR uint32_t VKAPI_CALL debugMessageFunc(
-		vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
-		vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
-		vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
-		void* pUserData
-	) {
-		std::println(std::cerr, "validation layer: {}", pCallbackData->pMessage);
-		return false;
-	}
-
-	static constexpr vk::DebugUtilsMessengerCreateInfoEXT populateDebugMessengerCreateInfo() {
-		constexpr vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-			vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
-		);
-		constexpr vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags(
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
-		);
-		return { {}, severityFlags, messageTypeFlags, &debugMessageFunc };
-	}
-
-	static bool checkDeviceExtensionSupport(const vk::raii::PhysicalDevice& physicalDevice) {
-		const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
-		std::set<std::string> requiredExtensions(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
-		for (const auto& extension : availableExtensions) {
-			requiredExtensions.erase(extension.extensionName);
-		}
-		return requiredExtensions.empty();
-	}
-
-	static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
-		for (const auto& availableFormat : availableFormats) {
-			if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
-				availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear
-				) return availableFormat;
-		}
-		return availableFormats.at(0);
-	}
-
-	static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
-		for (const auto& availablePresentMode : availablePresentModes) {
-			if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
-				return availablePresentMode;
-			}
-		}
-		return vk::PresentModeKHR::eFifo;
-	}
-
 
 public:
 	void run()
@@ -184,6 +216,9 @@ private:
 	vk::raii::CommandPool m_CommandPool{ nullptr };
 	std::vector<vk::raii::CommandBuffer> m_CommandBuffers;
 
+	vk::raii::DeviceMemory m_VertexBufferMemory{ nullptr };
+	vk::raii::Buffer m_VertexBuffer{ nullptr };
+
 	std::vector<vk::raii::Semaphore> m_ImageAvailableSemaphores;
 	std::vector<vk::raii::Semaphore> m_RenderFinishedSemaphores;
 	std::vector<vk::raii::Fence> m_InFlightFences;
@@ -223,6 +258,7 @@ private:
 		createCommandPool();
 		createCommandBuffers();
 		createSyncObjects();
+		createVertexBuffer();
 	}
 
 	void createInstance()
@@ -467,6 +503,11 @@ private:
 		dynamicState.setDynamicStates(dynamicStates);
 		
 		vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+		const auto bindingDescription = Vertex::getBindingDescription();
+		const auto attributeDescriptions = Vertex::getAttributeDescriptions();
+		vertexInputInfo.setVertexBindingDescriptions(bindingDescription);
+		vertexInputInfo.setVertexAttributeDescriptions(attributeDescriptions);
+
 		vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
 		inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
 		
@@ -547,6 +588,33 @@ private:
 			m_RenderFinishedSemaphores.emplace_back(m_Device.createSemaphore(semaphoreInfo));
 			m_InFlightFences.emplace_back(m_Device.createFence(fenceInfo));
 		}
+	}
+
+	void createVertexBuffer()
+	{
+		vk::BufferCreateInfo bufferInfo;
+		bufferInfo.size = sizeof(Vertex) * vertices.size();
+		bufferInfo.usage = vk::BufferUsageFlags::BitsType::eVertexBuffer;
+		bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+		m_VertexBuffer = m_Device.createBuffer(bufferInfo);
+
+		const vk::MemoryRequirements memRequirements = m_VertexBuffer.getMemoryRequirements();
+
+		vk::MemoryAllocateInfo allocInfo;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(
+			memRequirements.memoryTypeBits,
+			vk::MemoryPropertyFlagBits::eHostVisible |
+			vk::MemoryPropertyFlagBits::eHostCoherent
+		);
+
+		m_VertexBufferMemory = m_Device.allocateMemory(allocInfo);
+		m_VertexBuffer.bindMemory(m_VertexBufferMemory, 0);
+
+		void* data = m_VertexBufferMemory.mapMemory(0, bufferInfo.size);
+		memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size));
+		m_VertexBufferMemory.unmapMemory();
 	}
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
@@ -664,7 +732,11 @@ private:
 		);
 		commandBuffer.setScissor(0, scissor);
 
-		commandBuffer.draw(3, 1, 0, 0);
+		const std::array<vk::Buffer, 1> vertexBuffers{ m_VertexBuffer };
+		constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
+		commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
+
+		commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
 		commandBuffer.endRenderPass();
 		commandBuffer.end();
@@ -690,6 +762,17 @@ private:
 		createFramebuffers();
 
 		m_FramebufferResized = false;
+	}
+
+	uint32_t findMemoryType(const uint32_t typeFilter, const vk::MemoryPropertyFlags properties) const {
+		const auto memProperties = m_PhysicalDevice.getMemoryProperties();
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+			if ((typeFilter & (1 << i)) &&
+				(memProperties.memoryTypes[i].propertyFlags & properties) == properties
+				) return i;
+		}
+		throw std::runtime_error("failed to find suitable memory type!");
+		return 0; // optional
 	}
 private:
 	void mainloop()
