@@ -7,6 +7,7 @@
 #include <limits>
 #include <algorithm>
 #include <fstream>
+#include <print>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -96,9 +97,14 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-	{{0.0f, -0.5f}, {0.0f, 0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+const std::vector<uint32_t> indices = {
+	0, 1, 2, 2, 3, 0
 };
 
 static std::vector<const char*> getRequiredExtensions() {
@@ -200,7 +206,6 @@ private:
 	vk::raii::SurfaceKHR m_Surface{ nullptr };
 	vk::raii::PhysicalDevice m_PhysicalDevice{ nullptr };
 	vk::raii::Device m_Device{ nullptr };
-	QueueFamilyIndices m_QueueFamilyIndics;
 	vk::raii::Queue m_GraphicsQueue{ nullptr };
 	vk::raii::Queue m_PresentQueue{ nullptr };
 	vk::raii::Queue m_TransferQueue{ nullptr };
@@ -222,6 +227,9 @@ private:
 
 	vk::raii::DeviceMemory m_VertexBufferMemory{ nullptr };
 	vk::raii::Buffer m_VertexBuffer{ nullptr };
+
+	vk::raii::DeviceMemory m_IndexBufferMemory{ nullptr };
+	vk::raii::Buffer m_IndexBuffer{ nullptr };
 
 	std::vector<vk::raii::Semaphore> m_ImageAvailableSemaphores;
 	std::vector<vk::raii::Semaphore> m_RenderFinishedSemaphores;
@@ -264,6 +272,7 @@ private:
 		createCommandBuffers();
 		createSyncObjects();
 		createVertexBuffer();
+		createIndexBuffer();
 	}
 
 	void createInstance()
@@ -636,6 +645,35 @@ private:
 
 		copyBuffer(stagingBuffer, m_VertexBuffer, bufferSize);
 	}
+	
+	void createIndexBuffer()
+	{
+		const vk::DeviceSize bufferSize = sizeof(uint32_t) * indices.size();
+
+		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
+		vk::raii::Buffer stagingBuffer{ nullptr };
+		createBuffer(
+			bufferSize,
+			vk::BufferUsageFlagBits::eTransferSrc,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+		memcpy(data, indices.data(), static_cast<size_t>(bufferSize));
+		stagingBufferMemory.unmapMemory();
+
+		createBuffer(
+			bufferSize,
+			vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+			vk::MemoryPropertyFlagBits::eDeviceLocal,
+			m_IndexBuffer,
+			m_IndexBufferMemory
+		);
+
+		copyBuffer(stagingBuffer, m_IndexBuffer, bufferSize);
+	}
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
@@ -660,28 +698,30 @@ private:
 	QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
 		QueueFamilyIndices indices;
-		
-		// 找Graphics Queue
+
 		const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
 
-		// 找Transfer专用队列
-		for (int i = 0; const auto& queueFamily : queueFamilies)
+		// First pass: find dedicated transfer queue
+		for (uint32_t i = 0; i < queueFamilies.size(); i++)
 		{
+			const auto& queueFamily = queueFamilies[i];
 			if ((queueFamily.queueFlags & vk::QueueFlagBits::eTransfer) &&
-				!(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)) 
-			{	
+				!(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics))
+			{
 				indices.transferFamily = i;
 				break;
 			}
-			i++;
 		}
 
-		// 找Graphics和Present队列
-		for (int i = 0; const auto& queueFamily : queueFamilies) {
-			if ((queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)) 
+		// Second pass: find graphics and present queues
+		for (uint32_t i = 0; i < queueFamilies.size(); i++) {
+			const auto& queueFamily = queueFamilies[i];
+
+			if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)
 			{
 				indices.graphicsFamily = i;
 
+				// Use graphics queue as transfer if no dedicated transfer queue found
 				if (!indices.transferFamily.has_value())
 					indices.transferFamily = i;
 			}
@@ -691,8 +731,6 @@ private:
 			}
 
 			if (indices.isComplete()) break;
-
-			++i;
 		}
 
 		return indices;
@@ -770,11 +808,13 @@ private:
 		);
 		commandBuffer.setScissor(0, scissor);
 
-		const std::array<vk::Buffer, 1> vertexBuffers{ m_VertexBuffer };
-		constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
-		commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
+		//const std::array<vk::Buffer, 1> vertexBuffers{ m_VertexBuffer };
+		//constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
+		commandBuffer.bindVertexBuffers(0, *m_VertexBuffer, vk::DeviceSize{ 0 });
+		commandBuffer.bindIndexBuffer(m_IndexBuffer, 0, vk::IndexType::eUint32);
 
-		commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		//commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		commandBuffer.endRenderPass();
 		commandBuffer.end();
@@ -828,7 +868,7 @@ private:
 		bufferInfo.usage = usage;
 		
 		if (graphics.value() != transfer.value()) {
-			std::vector<uint32_t> queueFamilyIndices = { graphics.value(), transfer.value() };
+			std::array<uint32_t, 2> queueFamilyIndices = { graphics.value(), transfer.value() };
 			bufferInfo.sharingMode = vk::SharingMode::eConcurrent;
 			bufferInfo.setQueueFamilyIndices(queueFamilyIndices);
 		}
