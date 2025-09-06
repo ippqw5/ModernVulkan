@@ -8,13 +8,17 @@
 #include <algorithm>
 #include <fstream>
 #include <print>
+#include <chrono>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <GLFW/glfw3.h> // 必须在vulkan.hpp之后include
 
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 static std::vector<char> readFile(const std::string& filename) {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -105,6 +109,12 @@ const std::vector<Vertex> vertices = {
 
 const std::vector<uint32_t> indices = {
 	0, 1, 2, 2, 3, 0
+};
+
+struct UniformBufferObject {
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 proj;
 };
 
 static std::vector<const char*> getRequiredExtensions() {
@@ -218,6 +228,7 @@ private:
 
 	vk::raii::RenderPass m_RenderPass{ nullptr };
 	std::vector<vk::raii::Framebuffer> m_SwapChainFramebuffers;
+	vk::raii::DescriptorSetLayout m_DescriptorSetLayout{ nullptr };
 	vk::raii::PipelineLayout m_PipelineLayout{ nullptr };
 	vk::raii::Pipeline m_GraphicsPipeline{ nullptr };
 
@@ -230,6 +241,13 @@ private:
 
 	vk::raii::DeviceMemory m_IndexBufferMemory{ nullptr };
 	vk::raii::Buffer m_IndexBuffer{ nullptr };
+	
+	std::vector<vk::raii::DeviceMemory> m_UniformBuffersMemory;
+	std::vector<vk::raii::Buffer> m_UniformBuffers;
+	std::vector<void*> m_UniformBuffersMapped;
+	
+	vk::raii::DescriptorPool m_DescriptorPool{ nullptr };
+	std::vector<vk::raii::DescriptorSet> m_DescriptorSets;
 
 	std::vector<vk::raii::Semaphore> m_ImageAvailableSemaphores;
 	std::vector<vk::raii::Semaphore> m_RenderFinishedSemaphores;
@@ -266,6 +284,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createFramebuffers();
+		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createCommandPool();
 		createTransferCommandPool();
@@ -273,6 +292,9 @@ private:
 		createSyncObjects();
 		createVertexBuffer();
 		createIndexBuffer();
+		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
 	}
 
 	void createInstance()
@@ -491,6 +513,19 @@ private:
 		}
 	}
 
+	void createDescriptorSetLayout()
+	{
+		vk::DescriptorSetLayoutBinding uboLayoutoutBinding;
+		uboLayoutoutBinding.binding = 0; // 对应着色器中 layout(binding = 0)
+		uboLayoutoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+		uboLayoutoutBinding.descriptorCount = 1;
+		uboLayoutoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+		vk::DescriptorSetLayoutCreateInfo layoutInfo;
+		layoutInfo.setBindings(uboLayoutoutBinding);
+		m_DescriptorSetLayout = m_Device.createDescriptorSetLayout(layoutInfo);
+	}
+
 	void createGraphicsPipeline() {
 		const auto vertShaderCode = readFile("shaders/graphics.vert.spv");
 		const auto fragShaderCode = readFile("shaders/graphics.frag.spv");
@@ -534,7 +569,7 @@ private:
 		rasterizer.polygonMode = vk::PolygonMode::eFill;
 		rasterizer.lineWidth = 1.0f;
 		rasterizer.cullMode = vk::CullModeFlagBits::eBack;
-		rasterizer.frontFace = vk::FrontFace::eClockwise;
+		rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
 		
 		vk::PipelineMultisampleStateCreateInfo multisampling;
 		multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
@@ -550,6 +585,7 @@ private:
 		colorBlending.setAttachments(colorBlendAttachment);
 		
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+		pipelineLayoutInfo.setSetLayouts(*m_DescriptorSetLayout);
 		m_PipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
 		
 
@@ -674,6 +710,76 @@ private:
 
 		copyBuffer(stagingBuffer, m_IndexBuffer, bufferSize);
 	}
+
+	void createUniformBuffers()
+	{
+		constexpr vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+
+		m_UniformBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+		m_UniformBuffersMemory.reserve(MAX_FRAMES_IN_FLIGHT);
+		m_UniformBuffersMapped.reserve(MAX_FRAMES_IN_FLIGHT);
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			m_UniformBuffers.emplace_back(nullptr);
+			m_UniformBuffersMemory.emplace_back(nullptr);
+			m_UniformBuffersMapped.emplace_back(nullptr);
+
+			createBuffer(bufferSize,
+				vk::BufferUsageFlagBits::eUniformBuffer,
+				vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+				m_UniformBuffers[i],
+				m_UniformBuffersMemory[i]
+			);
+
+			m_UniformBuffersMapped[i] = m_UniformBuffersMemory[i].mapMemory(0, bufferSize);
+		}
+	}
+
+	void createDescriptorPool()
+	{
+		vk::DescriptorPoolSize poolSize;
+		poolSize.type = vk::DescriptorType::eUniformBuffer;
+		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+		vk::DescriptorPoolCreateInfo poolInfo;
+		poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+		poolInfo.setPoolSizes(poolSize);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+		m_DescriptorPool = m_Device.createDescriptorPool(poolInfo);
+	}
+
+	void createDescriptorSets()
+	{
+		std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *m_DescriptorSetLayout);
+		vk::DescriptorSetAllocateInfo allocInfo;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.setSetLayouts(layouts);
+
+		m_DescriptorSets = m_Device.allocateDescriptorSets(allocInfo);
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			vk::DescriptorBufferInfo bufferInfo;
+			bufferInfo.buffer = m_UniformBuffers[i];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+
+			vk::WriteDescriptorSet descriptorWrite;
+			descriptorWrite.dstSet = m_DescriptorSets[i];
+			descriptorWrite.dstBinding = 0;
+			descriptorWrite.dstArrayElement = 0;
+
+			descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+			descriptorWrite.setBufferInfo(bufferInfo);
+
+			m_Device.updateDescriptorSets(descriptorWrite, nullptr);
+		}
+
+
+	}
+
 private:
 	bool isDeviceSuitable(const vk::raii::PhysicalDevice& physicalDevice) const
 	{
@@ -813,6 +919,14 @@ private:
 		commandBuffer.bindVertexBuffers(0, *m_VertexBuffer, vk::DeviceSize{ 0 });
 		commandBuffer.bindIndexBuffer(m_IndexBuffer, 0, vk::IndexType::eUint32);
 
+		commandBuffer.bindDescriptorSets(
+			vk::PipelineBindPoint::eGraphics,
+			m_PipelineLayout,
+			0,
+			*m_DescriptorSets[m_CurrentFrame],
+			nullptr
+		);
+
 		//commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 		commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
@@ -933,6 +1047,11 @@ private:
 	
 	void cleanup()
 	{
+		for (const auto& it : m_UniformBuffersMemory)
+		{
+			it.unmapMemory();
+		}
+
 		glfwDestroyWindow(m_GLFWwindow);
 		glfwTerminate();
 	}
@@ -954,6 +1073,8 @@ private:
 		} // Do not catch other exceptions
 
 		m_Device.resetFences(*m_InFlightFences[m_CurrentFrame]);
+
+		updateUniformBuffer(m_CurrentFrame);
 
 		m_CommandBuffers[m_CurrentFrame].reset();
 		recordCommandBuffer(m_CommandBuffers[m_CurrentFrame], imageIndex);
@@ -986,6 +1107,35 @@ private:
 		}
 
 		m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	}
+
+	void updateUniformBuffer(const uint32_t currentImage) const
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+		const auto currentTime = std::chrono::high_resolution_clock::now();
+		const float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		UniformBufferObject ubo{};
+		ubo.model = glm::rotate(
+			glm::mat4(1.0f),
+			time * glm::radians(90.f),
+			glm::vec3(0.0f, 0.0f, 1.0f)
+		);
+		ubo.view = glm::lookAt(
+			glm::vec3(2.0f, 2.0f, 2.0f), // eye (src)
+			glm::vec3(0.0f, 0.0f, 0.0f), // center (target)
+			glm::vec3(0.0f, 0.0f, 1.0f)  // up axis
+		);
+		ubo.proj = glm::perspective(
+			glm::radians(45.0f),
+			static_cast<float>(m_SwapChainExtent.width) / static_cast<float>(m_SwapChainExtent.height),
+			0.1f,
+			20.f
+		);
+		ubo.proj[1][1] *= -1.0f; // GLM is for OpenGL whose y-axis is bottom-to-up, but vulkan is up-to-bottom
+
+		memcpy(m_UniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
 };
 
