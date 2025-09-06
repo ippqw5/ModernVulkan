@@ -16,6 +16,8 @@ endif()
 
 project(HelloVulkan LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # 此处使用 23 标准，你可以按需设置
 set(CMAKE_CXX_STANDARD 23)
 

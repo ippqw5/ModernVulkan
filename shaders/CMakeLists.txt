@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.9.0)
+cmake_minimum_required(VERSION 3.30.0)
 
 find_package(Vulkan REQUIRED)
 
@@ -6,8 +6,8 @@ set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 set(STAGE_VERT -fshader-stage=vert)
 set(STAGE_FRAG -fshader-stage=frag)
-set(GRAPHICS_VERT_SHADER ${SHADER_DIR}/graphics.vert.glsl)
-set(GRAPHICS_FRAG_SHADER ${SHADER_DIR}/graphics.frag.glsl)
+set(GRAPHICS_VERT_SHADER ${SHADER_DIR}/graphics.glsl.vert)
+set(GRAPHICS_FRAG_SHADER ${SHADER_DIR}/graphics.glsl.frag)
 set(GRAPHICS_SPIRV_VERT ${OUTPUT_DIR}/graphics.vert.spv)
 set(GRAPHICS_SPIRV_FRAG ${OUTPUT_DIR}/graphics.frag.spv)
 
