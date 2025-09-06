@@ -31,10 +31,14 @@ if(USE_VCPKG)
     # 通过vcpkg导入第三方库
     find_package(glfw3 CONFIG REQUIRED)
     find_package(glm CONFIG REQUIRED)
+    find_package(Stb REQUIRED)
     
     # 添加可执行程序目标
     add_executable(${PROJECT_NAME} src/main.cpp)
     
+    # 包含目录
+    target_include_directories(${PROJECT_NAME} PRIVATE ${Stb_INCLUDE_DIR})
+
     # 链接库
     target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
@@ -51,7 +55,7 @@ else()
     
     # 添加包含目录
     target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include)
-    
+    target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/stb)
     # 链接Vulkan
     target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     
@@ -66,7 +70,14 @@ else()
     endif()
     
     # GLM is header-only, so no linking needed
+
+    # STB is header-only, so no linking needed
     
 endif()
 
 add_subdirectory(shaders)
+
+# add `textures` folder to working directory?
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/textures $<TARGET_FILE_DIR:${PROJECT_NAME}>/textures)
