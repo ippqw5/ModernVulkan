@@ -15,8 +15,8 @@
 
 #include <GLFW/glfw3.h> // 必须在vulkan.hpp之后include
 
-#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE // Vulkan 的深度范围是[0, 1]，OpenGL 的是[-1, 1]
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -77,7 +77,7 @@ struct SwapChainSupportDetails {
 };
 
 struct Vertex {
-	glm::vec2 pos;
+	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texCoord;
 
@@ -94,7 +94,7 @@ struct Vertex {
 
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
-		attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+		attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
 		attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
 		attributeDescriptions[1].binding = 0;
@@ -112,14 +112,19 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-};
+	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+	{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
 
+	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+	{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+	{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+	{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
+};
 const std::vector<uint32_t> indices = {
-	0, 1, 2, 2, 3, 0
+	0, 1, 2, 2, 3, 0,
+	4, 5, 6, 6, 7, 4
 };
 
 struct UniformBufferObject {
@@ -237,6 +242,10 @@ private:
 	vk::Extent2D m_SwapChainExtent{};
 	std::vector<vk::raii::ImageView> m_SwapChainImageViews;
 
+	vk::raii::DeviceMemory m_DepthImageMemory{ nullptr };
+	vk::raii::Image m_DepthImage{ nullptr };
+	vk::raii::ImageView m_DepthImageView{ nullptr };
+
 	vk::raii::RenderPass m_RenderPass{ nullptr };
 	std::vector<vk::raii::Framebuffer> m_SwapChainFramebuffers;
 	std::vector<vk::raii::DescriptorSetLayout> m_DescriptorSetLayouts;
@@ -300,12 +309,13 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
-		createFramebuffers();
 		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createCommandPool();
-		createTransferCommandPool();
 		createCommandBuffers();
+		createTransferCommandPool();
+		createDepthResources();
+		createFramebuffers();
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -459,7 +469,7 @@ private:
 	void createImageViews() {
 		m_SwapChainImageViews.reserve(m_SwapChainImages.size());
 		for (const auto& image : m_SwapChainImages) {
-			m_SwapChainImageViews.emplace_back(createImageView(image, m_SwapChainImageFormat));
+			m_SwapChainImageViews.emplace_back(createImageView(image, m_SwapChainImageFormat, vk::ImageAspectFlagBits::eColor));
 		}
 	}
 
@@ -479,24 +489,38 @@ private:
 		colorAttachmentRef.attachment = 0;
 		colorAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
+		vk::AttachmentDescription depthAttachment;
+		depthAttachment.format = findDepthFormat({ vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint });
+		depthAttachment.samples = vk::SampleCountFlagBits::e1;
+		depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+		depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+		depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+		depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+		depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+		depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+		vk::AttachmentReference depthAttachmentRef;
+		depthAttachmentRef.attachment = 1;
+		depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
 		vk::SubpassDescription subpass;
 		subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-
 		subpass.setColorAttachments(colorAttachmentRef);
+		subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
+		const auto attachments = { colorAttachment, depthAttachment };
 		vk::RenderPassCreateInfo renderPassInfo;
-		renderPassInfo.setAttachments(colorAttachment);
+		renderPassInfo.setAttachments(attachments);
 		renderPassInfo.setSubpasses(subpass);
 
 		vk::SubpassDependency dependency;
 		dependency.srcSubpass = vk::SubpassExternal;
 		dependency.dstSubpass = 0;
 
-		dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-		dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-
-		dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+		dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
 		dependency.srcAccessMask = {};
+		dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+		dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 		renderPassInfo.setDependencies(dependency);
 
 		m_RenderPass = m_Device.createRenderPass(renderPassInfo);
@@ -510,8 +534,9 @@ private:
 		framebufferInfo.width = m_SwapChainExtent.width;
 		framebufferInfo.height = m_SwapChainExtent.height;
 		framebufferInfo.layers = 1;
-		for (const auto& imageView : m_SwapChainImageViews) {
-			framebufferInfo.setAttachments(*imageView);
+		for (const auto& swapchainImageView : m_SwapChainImageViews) {
+			const std::array<vk::ImageView, 2> imageViews{ swapchainImageView, m_DepthImageView };
+			framebufferInfo.setAttachments(imageViews);
 			m_SwapChainFramebuffers.emplace_back(m_Device.createFramebuffer(framebufferInfo));
 		}
 	}
@@ -602,6 +627,16 @@ private:
 		pipelineLayoutInfo.setSetLayouts(descriptorSetLayouts);
 		m_PipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
 		
+		vk::PipelineDepthStencilStateCreateInfo depthStencil;
+		depthStencil.depthTestEnable = true;
+		depthStencil.depthWriteEnable = true;
+		depthStencil.depthCompareOp = vk::CompareOp::eLess;
+		depthStencil.depthBoundsTestEnable = false; // Optional
+		depthStencil.minDepthBounds = 0.0f; // Optional if depthBoundsTestEnable is false
+		depthStencil.maxDepthBounds = 1.0f; // Optional if depthBoundsTestEnable is false
+		depthStencil.stencilTestEnable = false; // Optional
+		depthStencil.front = vk::StencilOpState{}; // Optional if stencilTestEnable is false
+		depthStencil.back = vk::StencilOpState{}; // Optional if stencilTestEnable is false
 
 		vk::GraphicsPipelineCreateInfo pipelineInfo;
 		pipelineInfo.setStages(shaderStages);
@@ -610,7 +645,7 @@ private:
 		pipelineInfo.pViewportState = &viewportState;
 		pipelineInfo.pRasterizationState = &rasterizer;
 		pipelineInfo.pMultisampleState = &multisampling;
-		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
 		pipelineInfo.pDynamicState = &dynamicState;
 		pipelineInfo.layout = m_PipelineLayout;
@@ -651,6 +686,25 @@ private:
 		poolInfo.queueFamilyIndex = transfer.value();
 
 		m_TransferCommandPool = m_Device.createCommandPool(poolInfo);
+	}
+
+	void createDepthResources()
+	{
+		const vk::Format depthFormat = findDepthFormat(
+			{ vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint }
+		);
+
+		createImage(
+			m_SwapChainExtent.width,
+			m_SwapChainExtent.height,
+			depthFormat,
+			vk::ImageTiling::eOptimal,
+			vk::ImageUsageFlagBits::eDepthStencilAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal,
+			m_DepthImage,
+			m_DepthImageMemory
+		);
+		m_DepthImageView = createImageView(m_DepthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 	}
 
 	void createTextureImage()
@@ -713,7 +767,7 @@ private:
 
 	void createTextureImageView()
 	{
-		m_TextureImageView = createImageView(m_TextureImage, vk::Format::eR8G8B8A8Srgb);
+		m_TextureImageView = createImageView(m_TextureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
 	}
 
 	void createTextureSampler()
@@ -1019,8 +1073,10 @@ private:
 		renderPassInfo.framebuffer = m_SwapChainFramebuffers[imageIndex];
 		renderPassInfo.renderArea.offset = vk::Offset2D{ 0, 0 };
 		renderPassInfo.renderArea.extent = m_SwapChainExtent;
-		constexpr vk::ClearValue clearColor(vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f));
-		renderPassInfo.setClearValues(clearColor);
+		std::array<vk::ClearValue, 2> clearValues;
+		clearValues[0].color = vk::ClearColorValue{ 0.0f, 0.0f, 0.0f, 1.0f };
+		clearValues[1].depthStencil = vk::ClearDepthStencilValue{ 1.0f, 0 };
+		renderPassInfo.setClearValues(clearValues);
 
 		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
@@ -1079,8 +1135,13 @@ private:
 		m_SwapChainImages.clear(); // optional
 		m_SwapChain = nullptr;
 
+		m_DepthImageView = nullptr;
+		m_DepthImage = nullptr;
+		m_DepthImageMemory = nullptr;
+
 		createSwapChain();
 		createImageViews();
+		createDepthResources();
 		createFramebuffers();
 
 		m_FramebufferResized = false;
@@ -1168,13 +1229,15 @@ private:
 
 	vk::raii::ImageView createImageView(
 		const vk::Image image,
-		const vk::Format format
+		const vk::Format format,
+		const vk::ImageAspectFlags aspectFlags
 	) const
 	{
 		vk::ImageViewCreateInfo viewInfo;
 		viewInfo.image = image;
 		viewInfo.viewType = vk::ImageViewType::e2D;
 		viewInfo.format = format;
+		viewInfo.subresourceRange.aspectMask = aspectFlags;
 		vk::ImageSubresourceRange range;
 		range.aspectMask = vk::ImageAspectFlagBits::eColor;
 		range.baseMipLevel = 0;
@@ -1317,6 +1380,16 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
+	vk::Format findDepthFormat(const std::vector<vk::Format>& candidates) const {
+		for (const vk::Format format : candidates) {
+			// vk::FormatProperties
+			const auto props = m_PhysicalDevice.getFormatProperties(format);
+			if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+				return format;
+			}
+		}
+		throw std::runtime_error("failed to find supported format!");
+	}
 private:
 	void mainloop()
 	{
