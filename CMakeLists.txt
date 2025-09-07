@@ -25,6 +25,14 @@ set(CMAKE_CXX_STANDARD 23)
 # 环境变量默认在Vulkan SDK安装时，自动设置
 find_package(Vulkan REQUIRED)
 
+# 添加可执行程序目标
+add_executable(${PROJECT_NAME} 
+    "src/main.cpp"
+    "src/camera.cpp"
+    "src/input.cpp"
+    "src/application.cpp"
+)
+
 if(USE_VCPKG)
     message(STATUS "Using vcpkg for third-party libraries")
     
@@ -33,9 +41,6 @@ if(USE_VCPKG)
     find_package(glm CONFIG REQUIRED)
     find_package(Stb REQUIRED)
     find_package(tinyobjloader CONFIG REQUIRED)
-    
-    # 添加可执行程序目标
-    add_executable(${PROJECT_NAME} src/main.cpp)
     
     # 包含目录
     target_include_directories(${PROJECT_NAME} PRIVATE ${Stb_INCLUDE_DIR})
@@ -48,9 +53,6 @@ if(USE_VCPKG)
     
 else()
     message(STATUS "Using local thirdparty libraries")
-    
-    # 添加可执行程序目标
-    add_executable(${PROJECT_NAME} src/main.cpp)
     
     # 设置thirdparty路径
     set(THIRDPARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)

@@ -28,6 +28,9 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
+#include "application.h"
+#include "camera.h"
+
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
 
@@ -192,7 +195,7 @@ static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentMod
 	return vk::PresentModeKHR::eFifo;
 }
 
-class HelloTriangle {
+class HelloTriangle : Application {
 
 public:
 	void run()
@@ -281,6 +284,8 @@ private:
 	uint32_t m_CurrentFrame = 0;
 	bool m_FramebufferResized = false;
 
+	Camera m_Camera{ 45.0f, 0.1f, 100.0f };
+
 private:
 	void initWindow()
 	{
@@ -290,6 +295,9 @@ private:
 		
 		m_GLFWwindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "HelloTriangle", nullptr, nullptr);
 		
+		m_Camera.OnResize(WINDOW_WIDTH, WINDOW_HEIGHT);
+		SetWindowHandle(m_GLFWwindow);
+
 		glfwSetWindowUserPointer(m_GLFWwindow, this);
 		glfwSetFramebufferSizeCallback(m_GLFWwindow, framebufferResizeCallback);
 	}
@@ -297,6 +305,12 @@ private:
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
 		const auto app = static_cast<HelloTriangle*>(glfwGetWindowUserPointer(window));
 		app->m_FramebufferResized = true;
+	}
+
+	static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+			glfwSetWindowShouldClose(window, GLFW_TRUE);
+		}
 	}
 
 	void initVulkan()
@@ -1164,6 +1178,7 @@ private:
 
 		int width = 0, height = 0;
 		glfwGetFramebufferSize(m_GLFWwindow, &width, &height);
+		m_Camera.OnResize(width, height);
 		while (width == 0 || height == 0) {
 			glfwGetFramebufferSize(m_GLFWwindow, &width, &height);
 			glfwWaitEvents();
@@ -1506,31 +1521,29 @@ private:
 		m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
-	void updateUniformBuffer(const uint32_t currentImage) const
+	void updateUniformBuffer(const uint32_t currentImage)
 	{
-		static auto startTime = std::chrono::high_resolution_clock::now();
+		static auto lastTime = std::chrono::high_resolution_clock::now();
+		const auto now = std::chrono::high_resolution_clock::now();
+		const float deltaime = std::chrono::duration<float, std::chrono::seconds::period>(now - lastTime).count();
+		lastTime = now;
 
-		const auto currentTime = std::chrono::high_resolution_clock::now();
-		const float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+		m_Camera.OnUpdate(deltaime);
 
 		UniformBufferObject ubo{};
 		ubo.model = glm::rotate(
 			glm::mat4(1.0f),
-			time * glm::radians(90.f),
+			glm::radians(-90.0f),
+			glm::vec3(1.0f, 0.0f, 0.0f)
+		);
+		ubo.model *= glm::rotate(
+			glm::mat4(1.0f),
+			glm::radians(-90.0f),
 			glm::vec3(0.0f, 0.0f, 1.0f)
 		);
-		ubo.view = glm::lookAt(
-			glm::vec3(2.0f, 2.0f, 2.0f), // eye (src)
-			glm::vec3(0.0f, 0.0f, 0.0f), // center (target)
-			glm::vec3(0.0f, 0.0f, 1.0f)  // up axis
-		);
-		ubo.proj = glm::perspective(
-			glm::radians(45.0f),
-			static_cast<float>(m_SwapChainExtent.width) / static_cast<float>(m_SwapChainExtent.height),
-			0.1f,
-			20.f
-		);
-		ubo.proj[1][1] *= -1.0f; // GLM is for OpenGL whose y-axis is bottom-to-up, but vulkan is up-to-bottom
+		ubo.view = m_Camera.GetView();
+		ubo.proj = m_Camera.GetProjection();
+		ubo.proj[1][1] *= -1.0f; // GLM is for OpenGL whose y-axis is bottom-to-up, but Vulkan is up-to-bottom
 
 		memcpy(m_UniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
