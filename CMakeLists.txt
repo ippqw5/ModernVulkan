@@ -32,6 +32,7 @@ if(USE_VCPKG)
     find_package(glfw3 CONFIG REQUIRED)
     find_package(glm CONFIG REQUIRED)
     find_package(Stb REQUIRED)
+    find_package(tinyobjloader CONFIG REQUIRED)
     
     # 添加可执行程序目标
     add_executable(${PROJECT_NAME} src/main.cpp)
@@ -43,6 +44,7 @@ if(USE_VCPKG)
     target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
     target_link_libraries(${PROJECT_NAME} PRIVATE glfw)
+    target_link_libraries(${PROJECT_NAME} PRIVATE tinyobjloader::tinyobjloader)
     
 else()
     message(STATUS "Using local thirdparty libraries")
@@ -56,6 +58,8 @@ else()
     # 添加包含目录
     target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include)
     target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/stb)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/tinyobjloader)
+
     # 链接Vulkan
     target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     
@@ -72,12 +76,19 @@ else()
     # GLM is header-only, so no linking needed
 
     # STB is header-only, so no linking needed
-    
+
+    # tinyobjloader is header-only, so no linking needed
+     
 endif()
 
 add_subdirectory(shaders)
 
-# add `textures` folder to working directory?
+# add `textures` folder to working directory
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/textures $<TARGET_FILE_DIR:${PROJECT_NAME}>/textures)
+
+# add `models` folder to working directory
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/models $<TARGET_FILE_DIR:${PROJECT_NAME}>/models)

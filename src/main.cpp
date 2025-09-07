@@ -9,6 +9,8 @@
 #include <fstream>
 #include <print>
 #include <chrono>
+#include <map>
+#include <tuple>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -22,6 +24,12 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+
+const std::string MODEL_PATH = "models/viking_room.obj";
+const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 static std::vector<char> readFile(const std::string& filename) {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -109,22 +117,11 @@ struct Vertex {
 
 		return attributeDescriptions;
 	}
-};
 
-const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-	{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-};
-const std::vector<uint32_t> indices = {
-	0, 1, 2, 2, 3, 0,
-	4, 5, 6, 6, 7, 4
+	bool operator<(const Vertex& other) const {
+		return std::tie(pos.x, pos.y, pos.z, color.x, color.y, color.z, texCoord.x, texCoord.y)
+			< std::tie(other.pos.x, other.pos.y, other.pos.z, other.color.x, other.color.y, other.color.z, other.texCoord.x, other.texCoord.y);
+	}
 };
 
 struct UniformBufferObject {
@@ -256,9 +253,11 @@ private:
 	vk::raii::CommandPool m_TransferCommandPool{ nullptr };
 	std::vector<vk::raii::CommandBuffer> m_CommandBuffers;
 
+	std::vector<Vertex> m_Vertices;
 	vk::raii::DeviceMemory m_VertexBufferMemory{ nullptr };
 	vk::raii::Buffer m_VertexBuffer{ nullptr };
 
+	std::vector<uint32_t> m_Indices;
 	vk::raii::DeviceMemory m_IndexBufferMemory{ nullptr };
 	vk::raii::Buffer m_IndexBuffer{ nullptr };
 	
@@ -282,6 +281,7 @@ private:
 	uint32_t m_CurrentFrame = 0;
 	bool m_FramebufferResized = false;
 
+private:
 	void initWindow()
 	{
 		glfwInit();
@@ -320,6 +320,7 @@ private:
 		createTextureImageView();
 		createTextureSampler();
 		createSyncObjects();
+		loadModel();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
@@ -711,7 +712,7 @@ private:
 	{
 		int texWidth, texHeight, texChannels;
 		// STBI_rgb_alpha 让他强制加载4通道，缺少的通道会自动补齐。
-		stbi_uc* pixels = stbi_load("textures/tea.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		if (!pixels) throw std::runtime_error("failed to load texture image!");
 
 		const vk::DeviceSize imageSize = texWidth * texHeight * 4;
@@ -809,9 +810,49 @@ private:
 		}
 	}
 
+	void loadModel()
+	{
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		std::string warn, err;
+
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, MODEL_PATH.c_str())) {
+			throw std::runtime_error(warn + err);
+		}
+
+		std::map<Vertex, uint32_t> uniqueVertices{};
+
+		for (const auto& shape : shapes) {
+			for (const auto& index : shape.mesh.indices) {
+				Vertex vertex{};
+
+				vertex.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2]
+				};
+
+				vertex.texCoord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+				};
+
+				vertex.color = { 1.0f, 1.0f, 1.0f };
+
+				if (!uniqueVertices.contains(vertex)) {
+					uniqueVertices[vertex] = static_cast<uint32_t>(m_Vertices.size());
+					m_Vertices.push_back(vertex);
+				}
+
+				m_Indices.push_back(uniqueVertices[vertex]);
+			}
+		}
+	}
+
 	void createVertexBuffer()
 	{
-		const vk::DeviceSize bufferSize = sizeof(Vertex) * vertices.size();
+		const vk::DeviceSize bufferSize = sizeof(Vertex) * m_Vertices.size();
 
 
 		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
@@ -825,7 +866,7 @@ private:
 		);
 
 		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
+		memcpy(data, m_Vertices.data(), static_cast<size_t>(bufferSize));
 		stagingBufferMemory.unmapMemory();
 
 		createBuffer(
@@ -841,7 +882,7 @@ private:
 	
 	void createIndexBuffer()
 	{
-		const vk::DeviceSize bufferSize = sizeof(uint32_t) * indices.size();
+		const vk::DeviceSize bufferSize = sizeof(uint32_t) * m_Indices.size();
 
 		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
 		vk::raii::Buffer stagingBuffer{ nullptr };
@@ -854,7 +895,7 @@ private:
 		);
 
 		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, indices.data(), static_cast<size_t>(bufferSize));
+		memcpy(data, m_Indices.data(), static_cast<size_t>(bufferSize));
 		stagingBufferMemory.unmapMemory();
 
 		createBuffer(
@@ -1113,8 +1154,7 @@ private:
 			nullptr
 		);
 
-		//commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-		commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(m_Indices.size()), 1, 0, 0, 0);
 
 		commandBuffer.endRenderPass();
 		commandBuffer.end();
