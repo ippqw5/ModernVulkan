@@ -268,6 +268,7 @@ private:
 	std::vector<vk::raii::Buffer> m_UniformBuffers;
 	std::vector<void*> m_UniformBuffersMapped;
 
+	uint32_t m_MipLevels = 1;
 	vk::raii::DeviceMemory m_TextureImageMemory{ nullptr };
 	vk::raii::Image m_TextureImage{ nullptr };
 	vk::raii::ImageView m_TextureImageView{ nullptr };
@@ -327,7 +328,7 @@ private:
 		createGraphicsPipeline();
 		createCommandPool();
 		createCommandBuffers();
-		createTransferCommandPool();
+		//createTransferCommandPool();
 		createDepthResources();
 		createFramebuffers();
 		createTextureImage();
@@ -484,7 +485,13 @@ private:
 	void createImageViews() {
 		m_SwapChainImageViews.reserve(m_SwapChainImages.size());
 		for (const auto& image : m_SwapChainImages) {
-			m_SwapChainImageViews.emplace_back(createImageView(image, m_SwapChainImageFormat, vk::ImageAspectFlagBits::eColor));
+			m_SwapChainImageViews.emplace_back(
+				createImageView(
+					image,
+					m_SwapChainImageFormat,
+					vk::ImageAspectFlagBits::eColor,
+					1)
+			);
 		}
 	}
 
@@ -712,6 +719,7 @@ private:
 		createImage(
 			m_SwapChainExtent.width,
 			m_SwapChainExtent.height,
+			1,
 			depthFormat,
 			vk::ImageTiling::eOptimal,
 			vk::ImageUsageFlagBits::eDepthStencilAttachment,
@@ -719,7 +727,7 @@ private:
 			m_DepthImage,
 			m_DepthImageMemory
 		);
-		m_DepthImageView = createImageView(m_DepthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+		m_DepthImageView = createImageView(m_DepthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
 	}
 
 	void createTextureImage()
@@ -728,6 +736,8 @@ private:
 		// STBI_rgb_alpha 让他强制加载4通道，缺少的通道会自动补齐。
 		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		if (!pixels) throw std::runtime_error("failed to load texture image!");
+
+		m_MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
 
 		const vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
@@ -750,9 +760,12 @@ private:
 		createImage(
 			texWidth,
 			texHeight,
+			m_MipLevels,
 			vk::Format::eR8G8B8A8Srgb,
 			vk::ImageTiling::eOptimal,
-			vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+			vk::ImageUsageFlagBits::eTransferSrc |
+			vk::ImageUsageFlagBits::eTransferDst |
+			vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal,
 			m_TextureImage,
 			m_TextureImageMemory
@@ -762,7 +775,8 @@ private:
 			m_TextureImage,
 			vk::Format::eR8G8B8A8Srgb,
 			vk::ImageLayout::eUndefined,
-			vk::ImageLayout::eTransferDstOptimal
+			vk::ImageLayout::eTransferDstOptimal,
+			m_MipLevels
 		);
 
 		copyBufferToImage(
@@ -772,17 +786,18 @@ private:
 			static_cast<uint32_t>(texHeight)
 		);
 
-		transitionImageLayout(
+		generateMipmaps(
 			m_TextureImage,
 			vk::Format::eR8G8B8A8Srgb,
-			vk::ImageLayout::eTransferDstOptimal,
-			vk::ImageLayout::eShaderReadOnlyOptimal
+			texWidth,
+			texHeight,
+			m_MipLevels
 		);
 	}
 
 	void createTextureImageView()
 	{
-		m_TextureImageView = createImageView(m_TextureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+		m_TextureImageView = createImageView(m_TextureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor, m_MipLevels);
 	}
 
 	void createTextureSampler()
@@ -806,7 +821,7 @@ private:
 		samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
 		samplerInfo.mipLodBias = 0.0f;
 		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = 0.0f;
+		samplerInfo.maxLod = static_cast<float>(m_MipLevels);
 
 		m_TextureSampler = m_Device.createSampler(samplerInfo);
 	}
@@ -1252,6 +1267,7 @@ private:
 	void createImage(
 		const uint32_t width,
 		const uint32_t height,
+		const uint32_t mipLevels,
 		const vk::Format format,
 		const vk::ImageTiling tiling,
 		const vk::ImageUsageFlags usage,
@@ -1265,7 +1281,7 @@ private:
 		imageInfo.extent.width = width;
 		imageInfo.extent.height = height;
 		imageInfo.extent.depth = 1;
-		imageInfo.mipLevels = 1;
+		imageInfo.mipLevels = mipLevels;
 		imageInfo.arrayLayers = 1;
 		imageInfo.format = format;
 		imageInfo.tiling = tiling;
@@ -1285,7 +1301,8 @@ private:
 	vk::raii::ImageView createImageView(
 		const vk::Image image,
 		const vk::Format format,
-		const vk::ImageAspectFlags aspectFlags
+		const vk::ImageAspectFlags aspectFlags,
+		const uint32_t mipLevels
 	) const
 	{
 		vk::ImageViewCreateInfo viewInfo;
@@ -1299,6 +1316,8 @@ private:
 		range.levelCount = 1;
 		range.baseArrayLayer = 0;
 		range.layerCount = 1;
+		range.aspectMask = aspectFlags;
+		range.levelCount = mipLevels;
 		viewInfo.setSubresourceRange(range);
 		return m_Device.createImageView(viewInfo);
 	}
@@ -1349,7 +1368,8 @@ private:
 	vk::raii::CommandBuffer beginSingleTimeCommands() const {
 		vk::CommandBufferAllocateInfo allocInfo;
 		allocInfo.level = vk::CommandBufferLevel::ePrimary;
-		allocInfo.commandPool = m_TransferCommandPool;
+		//allocInfo.commandPool = m_TransferCommandPool;
+		allocInfo.commandPool = m_CommandPool;
 		allocInfo.commandBufferCount = 1;
 
 		auto commandBuffers = m_Device.allocateCommandBuffers(allocInfo);
@@ -1369,15 +1389,18 @@ private:
 		vk::SubmitInfo submitInfo;
 		submitInfo.setCommandBuffers(*commandBuffer);
 
-		m_TransferQueue.submit(submitInfo);
-		m_TransferQueue.waitIdle();
+		//m_TransferQueue.submit(submitInfo);
+		//m_TransferQueue.waitIdle();
+		m_GraphicsQueue.submit(submitInfo);
+		m_GraphicsQueue.waitIdle();
 	}
 
 	void transitionImageLayout(
 		const vk::raii::Image& image,
 		const vk::Format format,
 		const vk::ImageLayout oldLayout,
-		const vk::ImageLayout newLayout
+		const vk::ImageLayout newLayout,
+		const uint32_t mipLevels
 	) const
 	{
 		const vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
@@ -1391,7 +1414,7 @@ private:
 		barrier.image = image;
 		barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.levelCount = mipLevels;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.layerCount = 1;
 
@@ -1424,8 +1447,8 @@ private:
 		}
 
 		commandBuffer.pipelineBarrier(
-			{},     // TODO: srcStageMask
-			{},     // TODO: dstStageMask
+			sourceStage,
+			destinationStage,
 			{},     // dependencyFlags
 			nullptr,    // memoryBarriers
 			nullptr,    // bufferMemoryBarriers
@@ -1444,6 +1467,111 @@ private:
 			}
 		}
 		throw std::runtime_error("failed to find supported format!");
+	}
+
+	void generateMipmaps(
+		vk::raii::Image& image,
+		vk::Format imageFormat,
+		int32_t texWidth,
+		int32_t texHeight,
+		uint32_t mipLevels
+	)
+	{
+		// vk::FormatProperties
+		if (const auto formatProperties = m_PhysicalDevice.getFormatProperties(imageFormat);
+			!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)
+		) throw std::runtime_error("texture image format does not support linear blitting!");
+
+		const auto commandBuffer = beginSingleTimeCommands();
+
+		vk::ImageMemoryBarrier imageBarrier;
+		imageBarrier.image = image;
+		imageBarrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+		imageBarrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+		imageBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+		imageBarrier.subresourceRange.baseArrayLayer = 0;
+		imageBarrier.subresourceRange.layerCount = 1;
+		imageBarrier.subresourceRange.levelCount = 1;
+
+		int32_t mipWidth = texWidth;
+		int32_t mipHeight = texHeight;
+		for (uint32_t i = 1; i < mipLevels; i++) {
+			// 1. 将 i - 1 级别的图像布局转换成 eTransferSrcOptimal ，以便作为传输源
+			// 2. 从 i - 1 级别中 blit 新图像到 i 级别
+			// 3. 将 i - 1 级别的图像布局转换回 eShaderReadOnlyOptimal ，以便后面采样器读取
+			imageBarrier.subresourceRange.baseMipLevel = i - 1;
+			imageBarrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+			imageBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+			imageBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+			imageBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+			commandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eTransfer,
+				vk::PipelineStageFlagBits::eTransfer,
+				{},
+				nullptr,
+				nullptr,
+				imageBarrier
+			);
+
+			// 设置2D图像放缩范围 
+			// 左上角 [0, 0, 0] ---> [0, 0, 0]
+			// 右下角 [width, height, 1] ---> [width/2, height/2, 1]
+			// 实际上是一个3D cube，z值的范围一直为[0, 1)
+			vk::ImageBlit imageBlit;
+			imageBlit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+			imageBlit.srcOffsets[1] = vk::Offset3D{ mipWidth, mipHeight, 1 };
+			imageBlit.dstOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+			imageBlit.dstOffsets[1] = vk::Offset3D{ 
+				mipWidth > 1 ? mipWidth / 2 : 1,
+				mipHeight > 1 ? mipHeight / 2 : 1,
+				1 
+			};
+			imageBlit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+			imageBlit.srcSubresource.mipLevel = i - 1;
+			imageBlit.srcSubresource.baseArrayLayer = 0;
+			imageBlit.srcSubresource.layerCount = 1;
+			imageBlit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+			imageBlit.dstSubresource.mipLevel = i;
+			imageBlit.dstSubresource.baseArrayLayer = 0;
+			imageBlit.dstSubresource.layerCount = 1;
+			commandBuffer.blitImage(
+				image, vk::ImageLayout::eTransferSrcOptimal,
+				image, vk::ImageLayout::eTransferDstOptimal,
+				imageBlit,
+				vk::Filter::eLinear
+			);
+
+			imageBarrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+			imageBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			imageBarrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+			imageBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+			commandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eTransfer,
+				vk::PipelineStageFlagBits::eFragmentShader,
+				{},
+				nullptr,
+				nullptr,
+				imageBarrier
+			);
+
+			if (mipWidth > 1) mipWidth /= 2;
+			if (mipHeight > 1) mipHeight /= 2;
+		}
+		imageBarrier.subresourceRange.baseMipLevel = mipLevels - 1;
+		imageBarrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+		imageBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+		imageBarrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+		imageBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+		commandBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eTransfer,
+			vk::PipelineStageFlagBits::eFragmentShader,
+			{},
+			nullptr,
+			nullptr,
+			imageBarrier
+		);
+
+		endSingleTimeCommands(commandBuffer);
 	}
 private:
 	void mainloop()
