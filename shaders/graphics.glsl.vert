@@ -21,4 +21,5 @@ void main() {
     gl_Position= uMVP.proj * uMVP.view * inModel * vec4(inPosition, 1.0);
     fragColor = inColor;
     fragTexCoord = inTexCoord;
+    enableTexture = inEnableTexture;
 }
