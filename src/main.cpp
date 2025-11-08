@@ -11,6 +11,7 @@
 #include <chrono>
 #include <map>
 #include <tuple>
+#include <random>
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -31,8 +32,11 @@
 #include "application.h"
 #include "camera.h"
 
+const std::string BUNNY_PATH = "models/bunny.obj";
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
+
+const uint32_t BUNNY_NUMBER = 5;
 
 static std::vector<char> readFile(const std::string& filename) {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -128,9 +132,37 @@ struct Vertex {
 };
 
 struct UniformBufferObject {
-	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
+};
+
+struct InstanceData {
+	glm::mat4 model;
+	uint32_t enableTexture;
+
+	static vk::VertexInputBindingDescription getBindingDescription() {
+		vk::VertexInputBindingDescription bindingDescription;
+		bindingDescription.binding = 1;
+		bindingDescription.stride = sizeof(InstanceData);
+		bindingDescription.inputRate = vk::VertexInputRate::eInstance;
+
+		return bindingDescription;
+	}
+
+	static std::array<vk::VertexInputAttributeDescription, 5>  getAttributeDescriptions() {
+		std::array<vk::VertexInputAttributeDescription, 5> attributeDescriptions;
+		for (uint32_t i = 0; i < 4; ++i) {
+			attributeDescriptions[i].binding = 1; // binding 1 for instance data
+			attributeDescriptions[i].location = 3 + i; // location 3, 4, 5, 6
+			attributeDescriptions[i].format = vk::Format::eR32G32B32A32Sfloat;
+			attributeDescriptions[i].offset = sizeof(glm::vec4) * i;
+		}
+		attributeDescriptions[4].binding = 1;
+		attributeDescriptions[4].location = 7;
+		attributeDescriptions[4].format = vk::Format::eR32Uint;
+		attributeDescriptions[4].offset = offsetof(InstanceData, enableTexture);
+		return attributeDescriptions;
+	}
 };
 
 static std::vector<const char*> getRequiredExtensions() {
@@ -260,11 +292,17 @@ private:
 	vk::raii::CommandPool m_TransferCommandPool{ nullptr };
 	std::vector<vk::raii::CommandBuffer> m_CommandBuffers;
 
-	std::vector<Vertex> m_Vertices;
 	vk::raii::DeviceMemory m_VertexBufferMemory{ nullptr };
 	vk::raii::Buffer m_VertexBuffer{ nullptr };
+	vk::raii::DeviceMemory m_InstanceBufferMemory{ nullptr };
+	vk::raii::Buffer m_InstanceBuffer{ nullptr };
 
-	std::vector<uint32_t> m_Indices;
+	std::vector<Vertex> m_MeshVertices;
+	std::vector<uint32_t> m_MeshIndices;
+	std::vector<uint32_t> m_MeshIndexOffsets;
+	std::vector<uint32_t> m_MeshIndexCounts;
+	std::vector<InstanceData> m_InstanceDatas;
+
 	vk::raii::DeviceMemory m_IndexBufferMemory{ nullptr };
 	vk::raii::Buffer m_IndexBuffer{ nullptr };
 	
@@ -342,8 +380,11 @@ private:
 		createTextureImageView();
 		createTextureSampler();
 		createSyncObjects();
-		loadModel();
+		loadModel(MODEL_PATH);
+		loadModel(BUNNY_PATH);
+		initInstanceDatas();
 		createVertexBuffer();
+		createInstanceBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
 		createDescriptorPool();
@@ -649,9 +690,27 @@ private:
 		dynamicState.setDynamicStates(dynamicStates);
 		
 		vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-		const auto bindingDescription = Vertex::getBindingDescription();
-		const auto attributeDescriptions = Vertex::getAttributeDescriptions();
-		vertexInputInfo.setVertexBindingDescriptions(bindingDescription);
+		const auto vertexBindingDescription = Vertex::getBindingDescription();
+		const auto vertexAttributeDescriptions = Vertex::getAttributeDescriptions();
+		const auto instanceBindingDescription = InstanceData::getBindingDescription();
+		const auto instanceAttributeDescriptions = InstanceData::getAttributeDescriptions();
+
+		std::vector<vk::VertexInputBindingDescription> bindingDescriptions = {
+			vertexBindingDescription,
+			instanceBindingDescription
+		};
+
+		std::vector<vk::VertexInputAttributeDescription> attributeDescriptions(
+			vertexAttributeDescriptions.begin(),
+			vertexAttributeDescriptions.end()
+		);
+		attributeDescriptions.insert(
+			attributeDescriptions.end(),
+			instanceAttributeDescriptions.begin(),
+			instanceAttributeDescriptions.end()
+		);
+
+		vertexInputInfo.setVertexBindingDescriptions(bindingDescriptions);
 		vertexInputInfo.setVertexAttributeDescriptions(attributeDescriptions);
 
 		vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
@@ -900,16 +959,18 @@ private:
 		}
 	}
 
-	void loadModel()
+	void loadModel(const std::string& model_path)
 	{
 		tinyobj::attrib_t attrib;
 		std::vector<tinyobj::shape_t> shapes;
 		std::vector<tinyobj::material_t> materials;
 		std::string warn, err;
 
-		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, MODEL_PATH.c_str())) {
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, model_path.c_str())) {
 			throw std::runtime_error(warn + err);
 		}
+		
+		m_MeshIndexOffsets.push_back(m_MeshIndices.size()); // 记录开始位置
 
 		std::map<Vertex, uint32_t> uniqueVertices{};
 
@@ -923,26 +984,70 @@ private:
 					attrib.vertices[3 * index.vertex_index + 2]
 				};
 
-				vertex.texCoord = {
-					attrib.texcoords[2 * index.texcoord_index + 0],
-					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-				};
+				// 检查是否有纹理坐标
+				if (!attrib.texcoords.empty() && index.texcoord_index >= 0) {
+					vertex.texCoord = {
+						attrib.texcoords[2 * index.texcoord_index],
+						1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+					};
+				}
+				else {
+					vertex.texCoord = { 0.0f, 0.0f };
+				}
 
 				vertex.color = { 1.0f, 1.0f, 1.0f };
 
 				if (!uniqueVertices.contains(vertex)) {
-					uniqueVertices[vertex] = static_cast<uint32_t>(m_Vertices.size());
-					m_Vertices.push_back(vertex);
+					uniqueVertices[vertex] = static_cast<uint32_t>(m_MeshVertices.size());
+					m_MeshVertices.push_back(vertex);
 				}
 
-				m_Indices.push_back(uniqueVertices[vertex]);
+				m_MeshIndices.push_back(uniqueVertices[vertex]);
 			}
+		}
+
+		m_MeshIndexCounts.push_back(m_MeshIndices.size() - m_MeshIndexOffsets.back()); // 索引总数减去开始位置得到mesh的索引数
+	}
+
+	void initInstanceDatas()
+	{
+		InstanceData instanceData{};
+		m_InstanceDatas.reserve(BUNNY_NUMBER + 1);
+		// 房间的旋转矩阵，参考 `updateUniformBuffer` 中的内容。
+		instanceData.model = glm::rotate(
+			glm::mat4(1.0f),
+			glm::radians(-90.0f),
+			glm::vec3(1.0f, 0.0f, 0.0f)
+		) * glm::rotate(
+			glm::mat4(1.0f),
+			glm::radians(-90.0f),
+			glm::vec3(0.0f, 0.0f, 1.0f)
+		);
+		instanceData.enableTexture = 1; // 允许房间采样
+		m_InstanceDatas.emplace_back(instanceData);
+		// 随机数生成器
+		std::random_device rd;
+		std::default_random_engine gen(rd());
+		std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
+		// 初始化兔子的参数
+		for (int i = 0; i < BUNNY_NUMBER; ++i) {
+			// 随机移动和水平旋转
+			instanceData.model = glm::translate(
+				glm::mat4(1.0f),
+				glm::vec3(dis(gen), dis(gen), dis(gen))
+			) * glm::rotate(
+				glm::mat4(1.0f),
+				glm::radians(dis(gen) * 180.0f),
+				glm::vec3(0.0f, 1.0f, 0.0f)
+			);
+			instanceData.enableTexture = 0; // 禁止纹理采样
+			m_InstanceDatas.emplace_back(instanceData);
 		}
 	}
 
 	void createVertexBuffer()
 	{
-		const vk::DeviceSize bufferSize = sizeof(Vertex) * m_Vertices.size();
+		const vk::DeviceSize bufferSize = sizeof(Vertex) * m_MeshVertices.size();
 
 
 		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
@@ -956,7 +1061,7 @@ private:
 		);
 
 		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, m_Vertices.data(), static_cast<size_t>(bufferSize));
+		memcpy(data, m_MeshVertices.data(), static_cast<size_t>(bufferSize));
 		stagingBufferMemory.unmapMemory();
 
 		createBuffer(
@@ -970,9 +1075,38 @@ private:
 		copyBuffer(stagingBuffer, m_VertexBuffer, bufferSize);
 	}
 	
+	void createInstanceBuffer()
+	{
+		const vk::DeviceSize bufferSize = sizeof(InstanceData) * m_InstanceDatas.size();
+
+		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
+		vk::raii::Buffer stagingBuffer{ nullptr };
+		createBuffer(bufferSize,
+			vk::BufferUsageFlagBits::eTransferSrc,
+			vk::MemoryPropertyFlagBits::eHostVisible |
+			vk::MemoryPropertyFlagBits::eHostCoherent,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+		memcpy(data, m_InstanceDatas.data(), static_cast<size_t>(bufferSize));
+		stagingBufferMemory.unmapMemory();
+
+		createBuffer(bufferSize,
+			vk::BufferUsageFlagBits::eTransferDst |
+			vk::BufferUsageFlagBits::eVertexBuffer,
+			vk::MemoryPropertyFlagBits::eDeviceLocal,
+			m_InstanceBuffer,
+			m_InstanceBufferMemory
+		);
+
+		copyBuffer(stagingBuffer, m_InstanceBuffer, bufferSize);
+	}
+	
 	void createIndexBuffer()
 	{
-		const vk::DeviceSize bufferSize = sizeof(uint32_t) * m_Indices.size();
+		const vk::DeviceSize bufferSize = sizeof(uint32_t) * m_MeshIndices.size();
 
 		vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
 		vk::raii::Buffer stagingBuffer{ nullptr };
@@ -985,7 +1119,7 @@ private:
 		);
 
 		void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, m_Indices.data(), static_cast<size_t>(bufferSize));
+		memcpy(data, m_MeshIndices.data(), static_cast<size_t>(bufferSize));
 		stagingBufferMemory.unmapMemory();
 
 		createBuffer(
@@ -1227,9 +1361,10 @@ private:
 		);
 		commandBuffer.setScissor(0, scissor);
 
-		//const std::array<vk::Buffer, 1> vertexBuffers{ m_VertexBuffer };
-		//constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
-		commandBuffer.bindVertexBuffers(0, *m_VertexBuffer, vk::DeviceSize{ 0 });
+		const std::array<vk::Buffer, 2> vertexBuffers{ m_VertexBuffer, m_InstanceBuffer };
+		// m_VertexBuffer 在数组的 0 号位，m_InstanceBuffer 在 1 号位，这就是为什么之前的 binding 参数分别是 0 和 1 。
+		constexpr std::array<vk::DeviceSize, 2> offsets{ 0, 0 };
+		commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
 		commandBuffer.bindIndexBuffer(m_IndexBuffer, 0, vk::IndexType::eUint32);
 
 		const std::array<vk::DescriptorSet, 2> descriptorSets{
@@ -1244,7 +1379,20 @@ private:
 			nullptr
 		);
 
-		commandBuffer.drawIndexed(static_cast<uint32_t>(m_Indices.size()), 1, 0, 0, 0);
+		commandBuffer.drawIndexed(  // 绘制房屋模型
+			m_MeshIndexCounts[0],        // vertexCount 一个实例包含的顶点/索引数量
+			1,                      // instanceCount 实例数量
+			m_MeshIndexOffsets[0],      // firstIndex   索引的开始位置
+			0,                      // vertexOffset 顶点的偏移量
+			0                       // firstInstance 实例的开始位置
+		);
+		commandBuffer.drawIndexed(  // 绘制 BUNNY_NUMBER 个兔子模型
+			m_MeshIndexCounts[1],
+			BUNNY_NUMBER,
+			m_MeshIndexOffsets[1],
+			0,
+			1
+		);
 
 		commandBuffer.endRenderPass();
 		commandBuffer.end();
@@ -1742,16 +1890,6 @@ private:
 		m_Camera.OnUpdate(deltaime);
 
 		UniformBufferObject ubo{};
-		ubo.model = glm::rotate(
-			glm::mat4(1.0f),
-			glm::radians(-90.0f),
-			glm::vec3(1.0f, 0.0f, 0.0f)
-		);
-		ubo.model *= glm::rotate(
-			glm::mat4(1.0f),
-			glm::radians(-90.0f),
-			glm::vec3(0.0f, 0.0f, 1.0f)
-		);
 		ubo.view = m_Camera.GetView();
 		ubo.proj = m_Camera.GetProjection();
 		ubo.proj[1][1] *= -1.0f; // GLM is for OpenGL whose y-axis is bottom-to-up, but Vulkan is up-to-bottom
