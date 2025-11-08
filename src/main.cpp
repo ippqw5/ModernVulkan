@@ -557,11 +557,10 @@ private:
 
 		vk::SubpassDescription subpass;
 		subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
-		subpass.pColorAttachments = &colorAttachmentRef;
-		subpass.colorAttachmentCount = 1;
 		subpass.pDepthStencilAttachment = &depthAttachmentRef;
+		subpass.pColorAttachments = &colorAttachmentRef;
 		subpass.pResolveAttachments = &colorAttachmentResolveRef;
-		subpass.preserveAttachmentCount = 1;
+		subpass.colorAttachmentCount = 1; // ColorAttachment 和 ResolveAttachment 共享同一个count
 
 		renderPassInfo.setSubpasses(subpass);
 		// SubPass
