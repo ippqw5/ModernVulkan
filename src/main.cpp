@@ -138,7 +138,6 @@ struct UniformBufferObject {
 
 struct InstanceData {
 	glm::mat4 model;
-	uint32_t enableTexture;
 
 	static vk::VertexInputBindingDescription getBindingDescription() {
 		vk::VertexInputBindingDescription bindingDescription;
@@ -149,18 +148,14 @@ struct InstanceData {
 		return bindingDescription;
 	}
 
-	static std::array<vk::VertexInputAttributeDescription, 5>  getAttributeDescriptions() {
-		std::array<vk::VertexInputAttributeDescription, 5> attributeDescriptions;
+	static std::array<vk::VertexInputAttributeDescription, 4>  getAttributeDescriptions() {
+		std::array<vk::VertexInputAttributeDescription, 4> attributeDescriptions;
 		for (uint32_t i = 0; i < 4; ++i) {
 			attributeDescriptions[i].binding = 1; // binding 1 for instance data
 			attributeDescriptions[i].location = 3 + i; // location 3, 4, 5, 6
 			attributeDescriptions[i].format = vk::Format::eR32G32B32A32Sfloat;
 			attributeDescriptions[i].offset = sizeof(glm::vec4) * i;
 		}
-		attributeDescriptions[4].binding = 1;
-		attributeDescriptions[4].location = 7;
-		attributeDescriptions[4].format = vk::Format::eR32Uint;
-		attributeDescriptions[4].offset = offsetof(InstanceData, enableTexture);
 		return attributeDescriptions;
 	}
 };
@@ -740,9 +735,15 @@ private:
 		colorBlending.logicOp = vk::LogicOp::eCopy;
 		colorBlending.setAttachments(colorBlendAttachment);
 		
+		vk::PushConstantRange pushConstantRange;
+		pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
+		pushConstantRange.offset = 0;
+		pushConstantRange.size = sizeof(uint32_t);
+
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
 		const std::vector<vk::DescriptorSetLayout> descriptorSetLayouts(m_DescriptorSetLayouts.begin(), m_DescriptorSetLayouts.end());
 		pipelineLayoutInfo.setSetLayouts(descriptorSetLayouts);
+		pipelineLayoutInfo.setPushConstantRanges(pushConstantRange);
 		m_PipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
 		
 		vk::PipelineDepthStencilStateCreateInfo depthStencil;
@@ -1023,7 +1024,6 @@ private:
 			glm::radians(-90.0f),
 			glm::vec3(0.0f, 0.0f, 1.0f)
 		);
-		instanceData.enableTexture = 1; // 允许房间采样
 		m_InstanceDatas.emplace_back(instanceData);
 		// 随机数生成器
 		std::random_device rd;
@@ -1040,7 +1040,6 @@ private:
 				glm::radians(dis(gen) * 180.0f),
 				glm::vec3(0.0f, 1.0f, 0.0f)
 			);
-			instanceData.enableTexture = 0; // 禁止纹理采样
 			m_InstanceDatas.emplace_back(instanceData);
 		}
 	}
@@ -1379,12 +1378,27 @@ private:
 			nullptr
 		);
 
+		uint32_t enableTexture = 1;
+		commandBuffer.pushConstants<uint32_t>(
+			m_PipelineLayout,
+			vk::ShaderStageFlagBits::eFragment,
+			0,
+			enableTexture
+		);
 		commandBuffer.drawIndexed(  // 绘制房屋模型
 			m_MeshIndexCounts[0],        // vertexCount 一个实例包含的顶点/索引数量
 			1,                      // instanceCount 实例数量
 			m_MeshIndexOffsets[0],      // firstIndex   索引的开始位置
 			0,                      // vertexOffset 顶点的偏移量
 			0                       // firstInstance 实例的开始位置
+		);
+
+		enableTexture = 0;
+		commandBuffer.pushConstants<uint32_t>(
+			m_PipelineLayout,
+			vk::ShaderStageFlagBits::eFragment,
+			0,
+			enableTexture
 		);
 		commandBuffer.drawIndexed(  // 绘制 BUNNY_NUMBER 个兔子模型
 			m_MeshIndexCounts[1],

@@ -14,6 +14,11 @@ if(USE_VCPKG)
     set(CMAKE_TOOLCHAIN_FILE "${VCPKG_CMAKE_PATH}/scripts/buildsystems/vcpkg.cmake")
 endif()
 
+if (MSVC)
+    # add /utf-8 option
+    add_compile_options(/utf-8)
+endif()
+
 project(HelloVulkan LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
