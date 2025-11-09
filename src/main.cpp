@@ -644,6 +644,10 @@ private:
 
 	void createDescriptorSetLayout()
 	{
+		// 多个描述符集绑定不同类型的资源，并在着色器用 set = 区分描述符集。 
+		// 一个描述符集绑定多个资源，通过 binding 区分。
+
+		// set 0: UBO + Dynamic UBO
 		vk::DescriptorSetLayoutBinding uboLayoutBinding;
 		uboLayoutBinding.binding = 0; // 对应着色器中 layout(binding = 0)
 		uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
@@ -656,21 +660,27 @@ private:
 		dynamicUboLayoutBinding.descriptorCount = 1;
 		dynamicUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 
-		// 多个描述符集绑定不同类型的资源，并在着色器用 set = 区分描述符集。 
-		// 一个描述符集绑定多个资源，通过 binding 区分。
 		const auto uboLayoutBindings = { uboLayoutBinding, dynamicUboLayoutBinding };
 		vk::DescriptorSetLayoutCreateInfo layoutInfo;
 		layoutInfo.setBindings(uboLayoutBindings);
 		m_DescriptorSetLayouts.emplace_back(m_Device.createDescriptorSetLayout(layoutInfo));
 
+		// set 1: 纹理采样器 + 纹理图像视图
 		vk::DescriptorSetLayoutBinding samplerLayoutBinding;
-		samplerLayoutBinding.binding = 0; // 新描述符集，因此依然从 0 开始
-		samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		samplerLayoutBinding.binding = 0; 
+		samplerLayoutBinding.descriptorType = vk::DescriptorType::eSampler;
 		samplerLayoutBinding.descriptorCount = 1;
 		samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-		vk::DescriptorSetLayoutCreateInfo samplerLayoutInfo;
 
-		samplerLayoutInfo.setBindings(samplerLayoutBinding);
+		vk::DescriptorSetLayoutBinding imageLayoutBinding;
+		imageLayoutBinding.binding = 1;
+		imageLayoutBinding.descriptorType = vk::DescriptorType::eSampledImage;
+		imageLayoutBinding.descriptorCount = 1;
+		imageLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+		const auto samplerLayoutBindings = { samplerLayoutBinding, imageLayoutBinding };
+		vk::DescriptorSetLayoutCreateInfo samplerLayoutInfo;
+		samplerLayoutInfo.setBindings(samplerLayoutBindings);
 		m_DescriptorSetLayouts.emplace_back(m_Device.createDescriptorSetLayout(samplerLayoutInfo));
 	}
 
@@ -1205,11 +1215,15 @@ private:
 
 	void createDescriptorPool()
 	{
-		std::array<vk::DescriptorPoolSize, 2> poolSizes;
+		std::array<vk::DescriptorPoolSize, 4> poolSizes;
 		poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
+		poolSizes[1].type = vk::DescriptorType::eSampler;
 		poolSizes[1].descriptorCount = 1;
+		poolSizes[2].type = vk::DescriptorType::eUniformBufferDynamic;
+		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		poolSizes[3].type = vk::DescriptorType::eSampledImage;
+		poolSizes[3].descriptorCount = 1;
 
 		vk::DescriptorPoolCreateInfo poolInfo;
 		poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -1255,24 +1269,30 @@ private:
 			m_Device.updateDescriptorSets(descriptorWrites, nullptr);
 		}
 
-		// 分配组合图像采样器描述符集
 		allocInfo.setSetLayouts(*m_DescriptorSetLayouts[1]); // 需要一次 * 显式转换
 		std::vector<vk::raii::DescriptorSet> sets = m_Device.allocateDescriptorSets(allocInfo);
 		m_CombinedDescriptorSet = std::move(sets.at(0));
 
-		vk::DescriptorImageInfo imageInfo;
-		imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-		imageInfo.imageView = m_TextureImageView;
-		imageInfo.sampler = m_TextureSampler;
+		vk::DescriptorImageInfo samplerInfo;
+		samplerInfo.sampler = m_TextureSampler;
 
-		vk::WriteDescriptorSet combinedDescriptorWrite;
-		combinedDescriptorWrite.dstSet = m_CombinedDescriptorSet;
-		combinedDescriptorWrite.dstBinding = 0;
-		combinedDescriptorWrite.dstArrayElement = 0;
-		combinedDescriptorWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		combinedDescriptorWrite.setImageInfo(imageInfo);
+		vk::DescriptorImageInfo textureInfo;
+		textureInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+		textureInfo.imageView = m_TextureImageView;
 
-		m_Device.updateDescriptorSets(combinedDescriptorWrite, nullptr);
+		std::array<vk::WriteDescriptorSet, 2> combinedDescriptorWrites;
+		combinedDescriptorWrites[0].dstSet = m_CombinedDescriptorSet;
+		combinedDescriptorWrites[0].dstBinding = 0;
+		combinedDescriptorWrites[0].dstArrayElement = 0;
+		combinedDescriptorWrites[0].descriptorType = vk::DescriptorType::eSampler;
+		combinedDescriptorWrites[0].setImageInfo(samplerInfo);
+		combinedDescriptorWrites[1].dstSet = m_CombinedDescriptorSet;
+		combinedDescriptorWrites[1].dstBinding = 1;
+		combinedDescriptorWrites[1].dstArrayElement = 0;
+		combinedDescriptorWrites[1].descriptorType = vk::DescriptorType::eSampledImage;
+		combinedDescriptorWrites[1].setImageInfo(textureInfo);
+
+		m_Device.updateDescriptorSets(combinedDescriptorWrites, nullptr);
 	}
 
 private:
