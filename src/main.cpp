@@ -35,6 +35,8 @@
 const std::string BUNNY_PATH = "models/bunny.obj";
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
+const std::string CRATE_MODEL_PATH = "models/crate.obj";
+const std::string CRATE_TEXTURE_PATH = "textures/crate.jpg";
 
 const uint32_t BUNNY_NUMBER = 5;
 
@@ -311,9 +313,9 @@ private:
 	std::vector<void*> m_DynamicUniformBuffersMapped;
 
 	uint32_t m_MipLevels = 1;
-	vk::raii::DeviceMemory m_TextureImageMemory{ nullptr };
-	vk::raii::Image m_TextureImage{ nullptr };
-	vk::raii::ImageView m_TextureImageView{ nullptr };
+	std::vector<vk::raii::DeviceMemory> m_TextureImageMemorys;
+	std::vector<vk::raii::Image> m_TextureImages;
+	std::vector<vk::raii::ImageView> m_TextureImageViews;
 	vk::raii::Sampler m_TextureSampler{ nullptr };
 
 	vk::raii::DescriptorPool m_DescriptorPool{ nullptr };
@@ -376,12 +378,14 @@ private:
 		createDepthResources();
 		createColorResources();
 		createFramebuffers();
-		createTextureImage();
+		createTextureImage(TEXTURE_PATH);
+		createTextureImage(CRATE_TEXTURE_PATH);
 		createTextureImageView();
 		createTextureSampler();
 		createSyncObjects();
 		loadModel(MODEL_PATH);
 		loadModel(BUNNY_PATH);
+		loadModel(CRATE_MODEL_PATH);
 		initInstanceDatas();
 		initDynamicUboMatrices();
 		createVertexBuffer();
@@ -675,7 +679,7 @@ private:
 		vk::DescriptorSetLayoutBinding imageLayoutBinding;
 		imageLayoutBinding.binding = 1;
 		imageLayoutBinding.descriptorType = vk::DescriptorType::eSampledImage;
-		imageLayoutBinding.descriptorCount = 1;
+		imageLayoutBinding.descriptorCount = 2;
 		imageLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
 
 		const auto samplerLayoutBindings = { samplerLayoutBinding, imageLayoutBinding };
@@ -764,7 +768,7 @@ private:
 		vk::PushConstantRange pushConstantRange;
 		pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = sizeof(uint32_t);
+		pushConstantRange.size = sizeof(int32_t);
 
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
 		const std::vector<vk::DescriptorSetLayout> descriptorSetLayouts(m_DescriptorSetLayouts.begin(), m_DescriptorSetLayouts.end());
@@ -876,11 +880,11 @@ private:
 		m_DepthImageView = createImageView(m_DepthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
 	}
 
-	void createTextureImage()
+	void createTextureImage(const std::string& texture_path)
 	{
 		int texWidth, texHeight, texChannels;
 		// STBI_rgb_alpha 让他强制加载4通道，缺少的通道会自动补齐。
-		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_uc* pixels = stbi_load(texture_path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		if (!pixels) throw std::runtime_error("failed to load texture image!");
 
 		m_MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
@@ -903,6 +907,10 @@ private:
 		stagingBufferMemory.unmapMemory();
 		stbi_image_free(pixels);
 
+		// 临时存放纹理图像的缓冲区，创建后移动到成员变量的数组中
+		vk::raii::Image tmpTextureBuffer{ nullptr };
+		vk::raii::DeviceMemory tmpTextureBufferMemory{ nullptr };
+
 		createImage(
 			texWidth,
 			texHeight,
@@ -914,12 +922,12 @@ private:
 			vk::ImageUsageFlagBits::eTransferDst |
 			vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal,
-			m_TextureImage,
-			m_TextureImageMemory
+			tmpTextureBuffer,
+			tmpTextureBufferMemory
 		);
 
 		transitionImageLayout(
-			m_TextureImage,
+			tmpTextureBuffer,
 			vk::Format::eR8G8B8A8Srgb,
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eTransferDstOptimal,
@@ -928,23 +936,36 @@ private:
 
 		copyBufferToImage(
 			stagingBuffer,
-			m_TextureImage,
+			tmpTextureBuffer,
 			static_cast<uint32_t>(texWidth),
 			static_cast<uint32_t>(texHeight)
 		);
 
 		generateMipmaps(
-			m_TextureImage,
+			tmpTextureBuffer,
 			vk::Format::eR8G8B8A8Srgb,
 			texWidth,
 			texHeight,
 			m_MipLevels
 		);
+
+		m_TextureImages.emplace_back(std::move(tmpTextureBuffer));
+		m_TextureImageMemorys.emplace_back(std::move(tmpTextureBufferMemory));
 	}
 
 	void createTextureImageView()
 	{
-		m_TextureImageView = createImageView(m_TextureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor, m_MipLevels);
+		for (const auto& image : m_TextureImages)
+		{
+			m_TextureImageViews.emplace_back(
+				createImageView(
+					*image,
+					vk::Format::eR8G8B8A8Srgb,
+					vk::ImageAspectFlagBits::eColor,
+					m_MipLevels
+				)
+			);
+		}
 	}
 
 	void createTextureSampler()
@@ -1068,10 +1089,19 @@ private:
 			);
 			m_InstanceDatas.emplace_back(instanceData);
 		}
+		instanceData.model = glm::translate(
+			glm::mat4(1.0f),
+			glm::vec3(0.0f, 0.0f, 1.2f)
+		) * glm::scale(
+			glm::mat4(1.0f),
+			glm::vec3(0.2f, 0.2f, 0.2f)
+		);
+		m_InstanceDatas.emplace_back(instanceData);
 	}
 
 	void initDynamicUboMatrices()
 	{
+		m_DynamicUboMatrices.emplace_back(1.0f);
 		m_DynamicUboMatrices.emplace_back(1.0f);
 		m_DynamicUboMatrices.emplace_back(1.0f);
 	}
@@ -1223,7 +1253,7 @@ private:
 		poolSizes[2].type = vk::DescriptorType::eUniformBufferDynamic;
 		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 		poolSizes[3].type = vk::DescriptorType::eSampledImage;
-		poolSizes[3].descriptorCount = 1;
+		poolSizes[3].descriptorCount = 2;
 
 		vk::DescriptorPoolCreateInfo poolInfo;
 		poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -1276,9 +1306,12 @@ private:
 		vk::DescriptorImageInfo samplerInfo;
 		samplerInfo.sampler = m_TextureSampler;
 
-		vk::DescriptorImageInfo textureInfo;
-		textureInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-		textureInfo.imageView = m_TextureImageView;
+		std::array<vk::DescriptorImageInfo, 2> textureInfos;
+		for (size_t index = 0; auto& info : textureInfos) {
+			info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			info.imageView = m_TextureImageViews[index];
+			++index;
+		}
 
 		std::array<vk::WriteDescriptorSet, 2> combinedDescriptorWrites;
 		combinedDescriptorWrites[0].dstSet = m_CombinedDescriptorSet;
@@ -1290,7 +1323,7 @@ private:
 		combinedDescriptorWrites[1].dstBinding = 1;
 		combinedDescriptorWrites[1].dstArrayElement = 0;
 		combinedDescriptorWrites[1].descriptorType = vk::DescriptorType::eSampledImage;
-		combinedDescriptorWrites[1].setImageInfo(textureInfo);
+		combinedDescriptorWrites[1].setImageInfo(textureInfos);
 
 		m_Device.updateDescriptorSets(combinedDescriptorWrites, nullptr);
 	}
@@ -1447,6 +1480,7 @@ private:
 		};
 
 		uint32_t dynamicOffset = 0; // 通过动态偏移量来选择动态 UBO 中的矩阵
+		uint32_t enableTexture = 0;
 		commandBuffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			m_PipelineLayout,
@@ -1454,9 +1488,7 @@ private:
 			descriptorSets,
 			dynamicOffset
 		);
-
-		uint32_t enableTexture = 1;
-		commandBuffer.pushConstants<uint32_t>(
+		commandBuffer.pushConstants<int32_t>(
 			m_PipelineLayout,
 			vk::ShaderStageFlagBits::eFragment,
 			0,
@@ -1471,6 +1503,7 @@ private:
 		);
 
 		dynamicOffset = sizeof(glm::mat4);
+		enableTexture = -1; //绘制兔子，无纹理，索引用 - 1
 		commandBuffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			m_PipelineLayout,
@@ -1478,9 +1511,7 @@ private:
 			descriptorSets,
 			dynamicOffset
 		);
-
-		enableTexture = 0;
-		commandBuffer.pushConstants<uint32_t>(
+		commandBuffer.pushConstants<int32_t>(
 			m_PipelineLayout,
 			vk::ShaderStageFlagBits::eFragment,
 			0,
@@ -1492,6 +1523,29 @@ private:
 			m_MeshIndexOffsets[1],
 			0,
 			1
+		);
+
+		dynamicOffset = 2 * sizeof(glm::mat4);
+		enableTexture = 1;  // 绘制正方体，纹理索引是 1
+		commandBuffer.bindDescriptorSets( // 保持模型静止
+			vk::PipelineBindPoint::eGraphics,
+			m_PipelineLayout,
+			0,
+			descriptorSets,
+			dynamicOffset
+		);
+		commandBuffer.pushConstants<int32_t>(
+			m_PipelineLayout,
+			vk::ShaderStageFlagBits::eFragment,
+			0,              // offset
+			enableTexture   // value
+		);
+		commandBuffer.drawIndexed( // draw the crate
+			m_MeshIndexCounts[2],
+			1,
+			m_MeshIndexOffsets[2],
+			0,
+			BUNNY_NUMBER + 1  // 实例索引
 		);
 
 		commandBuffer.endRenderPass();
