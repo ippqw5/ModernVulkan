@@ -297,6 +297,7 @@ private:
 	std::vector<uint32_t> m_MeshIndexOffsets;
 	std::vector<uint32_t> m_MeshIndexCounts;
 	std::vector<InstanceData> m_InstanceDatas;
+	std::vector<glm::mat4> m_DynamicUboMatrices;
 
 	vk::raii::DeviceMemory m_IndexBufferMemory{ nullptr };
 	vk::raii::Buffer m_IndexBuffer{ nullptr };
@@ -304,6 +305,10 @@ private:
 	std::vector<vk::raii::DeviceMemory> m_UniformBuffersMemory;
 	std::vector<vk::raii::Buffer> m_UniformBuffers;
 	std::vector<void*> m_UniformBuffersMapped;
+
+	std::vector<vk::raii::DeviceMemory> m_DynamicUniformBuffersMemory;
+	std::vector<vk::raii::Buffer> m_DynamicUniformBuffers;
+	std::vector<void*> m_DynamicUniformBuffersMapped;
 
 	uint32_t m_MipLevels = 1;
 	vk::raii::DeviceMemory m_TextureImageMemory{ nullptr };
@@ -378,10 +383,12 @@ private:
 		loadModel(MODEL_PATH);
 		loadModel(BUNNY_PATH);
 		initInstanceDatas();
+		initDynamicUboMatrices();
 		createVertexBuffer();
 		createInstanceBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
+		createDynamicUniformBuffers();
 		createDescriptorPool();
 		createDescriptorSets();
 	}
@@ -637,14 +644,23 @@ private:
 
 	void createDescriptorSetLayout()
 	{
-		vk::DescriptorSetLayoutBinding uboLayoutoutBinding;
-		uboLayoutoutBinding.binding = 0; // 对应着色器中 layout(binding = 0)
-		uboLayoutoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-		uboLayoutoutBinding.descriptorCount = 1;
-		uboLayoutoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+		vk::DescriptorSetLayoutBinding uboLayoutBinding;
+		uboLayoutBinding.binding = 0; // 对应着色器中 layout(binding = 0)
+		uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+		uboLayoutBinding.descriptorCount = 1;
+		uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 
+		vk::DescriptorSetLayoutBinding dynamicUboLayoutBinding;
+		dynamicUboLayoutBinding.binding = 1; // 对应着色器中 layout(binding = 1)
+		dynamicUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+		dynamicUboLayoutBinding.descriptorCount = 1;
+		dynamicUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+		// 多个描述符集绑定不同类型的资源，并在着色器用 set = 区分描述符集。 
+		// 一个描述符集绑定多个资源，通过 binding 区分。
+		const auto uboLayoutBindings = { uboLayoutBinding, dynamicUboLayoutBinding };
 		vk::DescriptorSetLayoutCreateInfo layoutInfo;
-		layoutInfo.setBindings(uboLayoutoutBinding);
+		layoutInfo.setBindings(uboLayoutBindings);
 		m_DescriptorSetLayouts.emplace_back(m_Device.createDescriptorSetLayout(layoutInfo));
 
 		vk::DescriptorSetLayoutBinding samplerLayoutBinding;
@@ -1044,6 +1060,12 @@ private:
 		}
 	}
 
+	void initDynamicUboMatrices()
+	{
+		m_DynamicUboMatrices.emplace_back(1.0f);
+		m_DynamicUboMatrices.emplace_back(1.0f);
+	}
+
 	void createVertexBuffer()
 	{
 		const vk::DeviceSize bufferSize = sizeof(Vertex) * m_MeshVertices.size();
@@ -1157,6 +1179,30 @@ private:
 		}
 	}
 
+	void createDynamicUniformBuffers()
+	{
+		const vk::DeviceSize bufferSize = sizeof(glm::mat4) * m_DynamicUboMatrices.size();
+
+		m_DynamicUniformBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+		m_DynamicUniformBuffersMemory.reserve(MAX_FRAMES_IN_FLIGHT);
+		m_DynamicUniformBuffersMapped.reserve(MAX_FRAMES_IN_FLIGHT);
+
+		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			m_DynamicUniformBuffers.emplace_back(nullptr);
+			m_DynamicUniformBuffersMemory.emplace_back(nullptr);
+			m_DynamicUniformBuffersMapped.emplace_back(nullptr);
+			createBuffer(bufferSize,
+				vk::BufferUsageFlagBits::eUniformBuffer,
+				vk::MemoryPropertyFlagBits::eHostVisible |
+				vk::MemoryPropertyFlagBits::eHostCoherent,
+				m_DynamicUniformBuffers[i],
+				m_DynamicUniformBuffersMemory[i]
+			);
+
+			m_DynamicUniformBuffersMapped[i] = m_DynamicUniformBuffersMemory[i].mapMemory(0, bufferSize);
+		}
+	}
+
 	void createDescriptorPool()
 	{
 		std::array<vk::DescriptorPoolSize, 2> poolSizes;
@@ -1189,15 +1235,24 @@ private:
 			bufferInfo.offset = 0;
 			bufferInfo.range = sizeof(UniformBufferObject);
 
-			vk::WriteDescriptorSet descriptorWrite;
-			descriptorWrite.dstSet = m_DescriptorSets[i];
-			descriptorWrite.dstBinding = 0;
-			descriptorWrite.dstArrayElement = 0;
+			vk::DescriptorBufferInfo dynamicBufferInfo;
+			dynamicBufferInfo.buffer = m_DynamicUniformBuffers[i];
+			dynamicBufferInfo.offset = 0;
+			dynamicBufferInfo.range = sizeof(glm::mat4);
 
-			descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-			descriptorWrite.setBufferInfo(bufferInfo);
+			std::array<vk::WriteDescriptorSet, 2> descriptorWrites;
+			descriptorWrites[0].dstSet = m_DescriptorSets[i];
+			descriptorWrites[0].dstBinding = 0;
+			descriptorWrites[0].dstArrayElement = 0;
+			descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+			descriptorWrites[0].setBufferInfo(bufferInfo);
+			descriptorWrites[1].dstSet = m_DescriptorSets[i];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+			descriptorWrites[1].setBufferInfo(dynamicBufferInfo);
 
-			m_Device.updateDescriptorSets(descriptorWrite, nullptr);
+			m_Device.updateDescriptorSets(descriptorWrites, nullptr);
 		}
 
 		// 分配组合图像采样器描述符集
@@ -1370,12 +1425,14 @@ private:
 			m_DescriptorSets[m_CurrentFrame],
 			m_CombinedDescriptorSet
 		};
+
+		uint32_t dynamicOffset = 0; // 通过动态偏移量来选择动态 UBO 中的矩阵
 		commandBuffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			m_PipelineLayout,
 			0,
 			descriptorSets,
-			nullptr
+			dynamicOffset
 		);
 
 		uint32_t enableTexture = 1;
@@ -1391,6 +1448,15 @@ private:
 			m_MeshIndexOffsets[0],      // firstIndex   索引的开始位置
 			0,                      // vertexOffset 顶点的偏移量
 			0                       // firstInstance 实例的开始位置
+		);
+
+		dynamicOffset = sizeof(glm::mat4);
+		commandBuffer.bindDescriptorSets(
+			vk::PipelineBindPoint::eGraphics,
+			m_PipelineLayout,
+			0,
+			descriptorSets,
+			dynamicOffset
 		);
 
 		enableTexture = 0;
@@ -1818,6 +1884,25 @@ private:
 		if (counts & vk::SampleCountFlagBits::e2) return vk::SampleCountFlagBits::e2;
 		return vk::SampleCountFlagBits::e1;
 	}
+
+	void updateDynamicUniformBuffer(const uint32_t currentImage) {
+		static auto startTime = std::chrono::high_resolution_clock::now();
+		const auto currentTime = std::chrono::high_resolution_clock::now();
+		const float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+		startTime = currentTime;
+
+		m_DynamicUboMatrices[1] = glm::rotate(
+			m_DynamicUboMatrices[1],    // 在原先的基础上旋转
+			glm::radians(time * 60.0f),
+			glm::vec3(0.0f, 1.0f, 0.0f)
+		);
+
+		memcpy(
+			m_DynamicUniformBuffersMapped[currentImage],
+			m_DynamicUboMatrices.data(),
+			sizeof(glm::mat4) * m_DynamicUboMatrices.size()
+		);
+	}
 private:
 	void mainloop()
 	{
@@ -1833,6 +1918,11 @@ private:
 	void cleanup()
 	{
 		for (const auto& it : m_UniformBuffersMemory)
+		{
+			it.unmapMemory();
+		}
+
+		for (const auto& it : m_DynamicUniformBuffersMemory)
 		{
 			it.unmapMemory();
 		}
@@ -1860,6 +1950,7 @@ private:
 		m_Device.resetFences(*m_InFlightFences[m_CurrentFrame]);
 
 		updateUniformBuffer(m_CurrentFrame);
+		updateDynamicUniformBuffer(m_CurrentFrame);
 
 		m_CommandBuffers[m_CurrentFrame].reset();
 		recordCommandBuffer(m_CommandBuffers[m_CurrentFrame], imageIndex);
