@@ -16,10 +16,10 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
-#include <GLFW/glfw3.h> // ±ØĞëÔÚvulkan.hppÖ®ºóinclude
+#include <GLFW/glfw3.h> // å¿…é¡»åœ¨vulkan.hppä¹‹åinclude
 
 #define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE // Vulkan µÄÉî¶È·¶Î§ÊÇ[0, 1]£¬OpenGL µÄÊÇ[-1, 1]
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE // Vulkan çš„æ·±åº¦èŒƒå›´æ˜¯[0, 1]ï¼ŒOpenGL çš„æ˜¯[-1, 1]
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -239,9 +239,9 @@ private:
 	GLFWwindow* m_GLFWwindow{ nullptr };
 
 	/*
-	³õÊ¼»¯ Vulkan Loader ×Ô¶¯¼ÓÔØÈ«¾Öº¯ÊıÖ¸Õë
-	±ØĞë³õÊ¼»¯£¬ÇÒÖ»ÄÜ³õÊ¼»¯Ò»´Î
-	¿ÉÎŞ²Î¹¹Ôì£¬ÇÒ²»¿Énullptr¹¹Ôì£¨ÌØÊâ£©
+	åˆå§‹åŒ– Vulkan Loader è‡ªåŠ¨åŠ è½½å…¨å±€å‡½æ•°æŒ‡é’ˆ
+	å¿…é¡»åˆå§‹åŒ–ï¼Œä¸”åªèƒ½åˆå§‹åŒ–ä¸€æ¬¡
+	å¯æ— å‚æ„é€ ï¼Œä¸”ä¸å¯nullptræ„é€ ï¼ˆç‰¹æ®Šï¼‰
 	*/
 	vk::raii::Context m_Context; 
 	/*
@@ -338,7 +338,7 @@ private:
 	{
 		glfwInit();
 
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // ½ûÓÃ OpenGL Backend (Ä¬ÈÏÊÇÆôÓÃµÄ)
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // ç¦ç”¨ OpenGL Backend (é»˜è®¤æ˜¯å¯ç”¨çš„)
 		
 		m_GLFWwindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "HelloTriangle", nullptr, nullptr);
 		
@@ -417,7 +417,7 @@ private:
 			.setPApplicationInfo(&applicationInfo);
 
 		std::vector<const char*> requiredExtensions = getRequiredExtensions();
-		createInfo.setPEnabledExtensionNames(requiredExtensions); //Ò»´ÎĞÔÉèÖÃ Extension Count ºÍ Extension Name
+		createInfo.setPEnabledExtensionNames(requiredExtensions); //ä¸€æ¬¡æ€§è®¾ç½® Extension Count å’Œ Extension Name
 		createInfo.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
 		constexpr auto debugMessengerCreateInfo = populateDebugMessengerCreateInfo();
@@ -607,7 +607,7 @@ private:
 		subpass.pDepthStencilAttachment = &depthAttachmentRef;
 		subpass.pColorAttachments = &colorAttachmentRef;
 		subpass.pResolveAttachments = &colorAttachmentResolveRef;
-		subpass.colorAttachmentCount = 1; // ColorAttachment ºÍ ResolveAttachment ¹²ÏíÍ¬Ò»¸öcount
+		subpass.colorAttachmentCount = 1; // ColorAttachment å’Œ ResolveAttachment å…±äº«åŒä¸€ä¸ªcount
 
 		renderPassInfo.setSubpasses(subpass);
 		// SubPass
@@ -648,18 +648,18 @@ private:
 
 	void createDescriptorSetLayout()
 	{
-		// ¶à¸öÃèÊö·û¼¯°ó¶¨²»Í¬ÀàĞÍµÄ×ÊÔ´£¬²¢ÔÚ×ÅÉ«Æ÷ÓÃ set = Çø·ÖÃèÊö·û¼¯¡£ 
-		// Ò»¸öÃèÊö·û¼¯°ó¶¨¶à¸ö×ÊÔ´£¬Í¨¹ı binding Çø·Ö¡£
+		// å¤šä¸ªæè¿°ç¬¦é›†ç»‘å®šä¸åŒç±»å‹çš„èµ„æºï¼Œå¹¶åœ¨ç€è‰²å™¨ç”¨ set = åŒºåˆ†æè¿°ç¬¦é›†ã€‚ 
+		// ä¸€ä¸ªæè¿°ç¬¦é›†ç»‘å®šå¤šä¸ªèµ„æºï¼Œé€šè¿‡ binding åŒºåˆ†ã€‚
 
 		// set 0: UBO + Dynamic UBO
 		vk::DescriptorSetLayoutBinding uboLayoutBinding;
-		uboLayoutBinding.binding = 0; // ¶ÔÓ¦×ÅÉ«Æ÷ÖĞ layout(binding = 0)
+		uboLayoutBinding.binding = 0; // å¯¹åº”ç€è‰²å™¨ä¸­ layout(binding = 0)
 		uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
 		uboLayoutBinding.descriptorCount = 1;
 		uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 
 		vk::DescriptorSetLayoutBinding dynamicUboLayoutBinding;
-		dynamicUboLayoutBinding.binding = 1; // ¶ÔÓ¦×ÅÉ«Æ÷ÖĞ layout(binding = 1)
+		dynamicUboLayoutBinding.binding = 1; // å¯¹åº”ç€è‰²å™¨ä¸­ layout(binding = 1)
 		dynamicUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
 		dynamicUboLayoutBinding.descriptorCount = 1;
 		dynamicUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
@@ -669,7 +669,7 @@ private:
 		layoutInfo.setBindings(uboLayoutBindings);
 		m_DescriptorSetLayouts.emplace_back(m_Device.createDescriptorSetLayout(layoutInfo));
 
-		// set 1: ÎÆÀí²ÉÑùÆ÷ + ÎÆÀíÍ¼ÏñÊÓÍ¼
+		// set 1: çº¹ç†é‡‡æ ·å™¨ + çº¹ç†å›¾åƒè§†å›¾
 		vk::DescriptorSetLayoutBinding samplerLayoutBinding;
 		samplerLayoutBinding.binding = 0; 
 		samplerLayoutBinding.descriptorType = vk::DescriptorType::eSampler;
@@ -883,7 +883,7 @@ private:
 	void createTextureImage(const std::string& texture_path)
 	{
 		int texWidth, texHeight, texChannels;
-		// STBI_rgb_alpha ÈÃËûÇ¿ÖÆ¼ÓÔØ4Í¨µÀ£¬È±ÉÙµÄÍ¨µÀ»á×Ô¶¯²¹Æë¡£
+		// STBI_rgb_alpha è®©ä»–å¼ºåˆ¶åŠ è½½4é€šé“ï¼Œç¼ºå°‘çš„é€šé“ä¼šè‡ªåŠ¨è¡¥é½ã€‚
 		stbi_uc* pixels = stbi_load(texture_path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		if (!pixels) throw std::runtime_error("failed to load texture image!");
 
@@ -907,7 +907,7 @@ private:
 		stagingBufferMemory.unmapMemory();
 		stbi_image_free(pixels);
 
-		// ÁÙÊ±´æ·ÅÎÆÀíÍ¼ÏñµÄ»º³åÇø£¬´´½¨ºóÒÆ¶¯µ½³ÉÔ±±äÁ¿µÄÊı×éÖĞ
+		// ä¸´æ—¶å­˜æ”¾çº¹ç†å›¾åƒçš„ç¼“å†²åŒºï¼Œåˆ›å»ºåç§»åŠ¨åˆ°æˆå‘˜å˜é‡çš„æ•°ç»„ä¸­
 		vk::raii::Image tmpTextureBuffer{ nullptr };
 		vk::raii::DeviceMemory tmpTextureBufferMemory{ nullptr };
 
@@ -1018,7 +1018,7 @@ private:
 			throw std::runtime_error(warn + err);
 		}
 		
-		m_MeshIndexOffsets.push_back(m_MeshIndices.size()); // ¼ÇÂ¼¿ªÊ¼Î»ÖÃ
+		m_MeshIndexOffsets.push_back(m_MeshIndices.size()); // è®°å½•å¼€å§‹ä½ç½®
 
 		std::map<Vertex, uint32_t> uniqueVertices{};
 
@@ -1032,7 +1032,7 @@ private:
 					attrib.vertices[3 * index.vertex_index + 2]
 				};
 
-				// ¼ì²éÊÇ·ñÓĞÎÆÀí×ø±ê
+				// æ£€æŸ¥æ˜¯å¦æœ‰çº¹ç†åæ ‡
 				if (!attrib.texcoords.empty() && index.texcoord_index >= 0) {
 					vertex.texCoord = {
 						attrib.texcoords[2 * index.texcoord_index],
@@ -1054,14 +1054,14 @@ private:
 			}
 		}
 
-		m_MeshIndexCounts.push_back(m_MeshIndices.size() - m_MeshIndexOffsets.back()); // Ë÷Òı×ÜÊı¼õÈ¥¿ªÊ¼Î»ÖÃµÃµ½meshµÄË÷ÒıÊı
+		m_MeshIndexCounts.push_back(m_MeshIndices.size() - m_MeshIndexOffsets.back()); // ç´¢å¼•æ€»æ•°å‡å»å¼€å§‹ä½ç½®å¾—åˆ°meshçš„ç´¢å¼•æ•°
 	}
 
 	void initInstanceDatas()
 	{
 		InstanceData instanceData{};
 		m_InstanceDatas.reserve(BUNNY_NUMBER + 1);
-		// ·¿¼äµÄĞı×ª¾ØÕó£¬²Î¿¼ `updateUniformBuffer` ÖĞµÄÄÚÈİ¡£
+		// æˆ¿é—´çš„æ—‹è½¬çŸ©é˜µï¼Œå‚è€ƒ `updateUniformBuffer` ä¸­çš„å†…å®¹ã€‚
 		instanceData.model = glm::rotate(
 			glm::mat4(1.0f),
 			glm::radians(-90.0f),
@@ -1072,13 +1072,13 @@ private:
 			glm::vec3(0.0f, 0.0f, 1.0f)
 		);
 		m_InstanceDatas.emplace_back(instanceData);
-		// Ëæ»úÊıÉú³ÉÆ÷
+		// éšæœºæ•°ç”Ÿæˆå™¨
 		std::random_device rd;
 		std::default_random_engine gen(rd());
 		std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
-		// ³õÊ¼»¯ÍÃ×ÓµÄ²ÎÊı
+		// åˆå§‹åŒ–å…”å­çš„å‚æ•°
 		for (int i = 0; i < BUNNY_NUMBER; ++i) {
-			// Ëæ»úÒÆ¶¯ºÍË®Æ½Ğı×ª
+			// éšæœºç§»åŠ¨å’Œæ°´å¹³æ—‹è½¬
 			instanceData.model = glm::translate(
 				glm::mat4(1.0f),
 				glm::vec3(dis(gen), dis(gen), dis(gen))
@@ -1299,7 +1299,7 @@ private:
 			m_Device.updateDescriptorSets(descriptorWrites, nullptr);
 		}
 
-		allocInfo.setSetLayouts(*m_DescriptorSetLayouts[1]); // ĞèÒªÒ»´Î * ÏÔÊ½×ª»»
+		allocInfo.setSetLayouts(*m_DescriptorSetLayouts[1]); // éœ€è¦ä¸€æ¬¡ * æ˜¾å¼è½¬æ¢
 		std::vector<vk::raii::DescriptorSet> sets = m_Device.allocateDescriptorSets(allocInfo);
 		m_CombinedDescriptorSet = std::move(sets.at(0));
 
@@ -1469,7 +1469,7 @@ private:
 		commandBuffer.setScissor(0, scissor);
 
 		const std::array<vk::Buffer, 2> vertexBuffers{ m_VertexBuffer, m_InstanceBuffer };
-		// m_VertexBuffer ÔÚÊı×éµÄ 0 ºÅÎ»£¬m_InstanceBuffer ÔÚ 1 ºÅÎ»£¬Õâ¾ÍÊÇÎªÊ²Ã´Ö®Ç°µÄ binding ²ÎÊı·Ö±ğÊÇ 0 ºÍ 1 ¡£
+		// m_VertexBuffer åœ¨æ•°ç»„çš„ 0 å·ä½ï¼Œm_InstanceBuffer åœ¨ 1 å·ä½ï¼Œè¿™å°±æ˜¯ä¸ºä»€ä¹ˆä¹‹å‰çš„ binding å‚æ•°åˆ†åˆ«æ˜¯ 0 å’Œ 1 ã€‚
 		constexpr std::array<vk::DeviceSize, 2> offsets{ 0, 0 };
 		commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
 		commandBuffer.bindIndexBuffer(m_IndexBuffer, 0, vk::IndexType::eUint32);
@@ -1479,7 +1479,7 @@ private:
 			m_CombinedDescriptorSet
 		};
 
-		uint32_t dynamicOffset = 0; // Í¨¹ı¶¯Ì¬Æ«ÒÆÁ¿À´Ñ¡Ôñ¶¯Ì¬ UBO ÖĞµÄ¾ØÕó
+		uint32_t dynamicOffset = 0; // é€šè¿‡åŠ¨æ€åç§»é‡æ¥é€‰æ‹©åŠ¨æ€ UBO ä¸­çš„çŸ©é˜µ
 		uint32_t enableTexture = 0;
 		commandBuffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
@@ -1494,16 +1494,16 @@ private:
 			0,
 			enableTexture
 		);
-		commandBuffer.drawIndexed(  // »æÖÆ·¿ÎİÄ£ĞÍ
-			m_MeshIndexCounts[0],        // vertexCount Ò»¸öÊµÀı°üº¬µÄ¶¥µã/Ë÷ÒıÊıÁ¿
-			1,                      // instanceCount ÊµÀıÊıÁ¿
-			m_MeshIndexOffsets[0],      // firstIndex   Ë÷ÒıµÄ¿ªÊ¼Î»ÖÃ
-			0,                      // vertexOffset ¶¥µãµÄÆ«ÒÆÁ¿
-			0                       // firstInstance ÊµÀıµÄ¿ªÊ¼Î»ÖÃ
+		commandBuffer.drawIndexed(  // ç»˜åˆ¶æˆ¿å±‹æ¨¡å‹
+			m_MeshIndexCounts[0],        // vertexCount ä¸€ä¸ªå®ä¾‹åŒ…å«çš„é¡¶ç‚¹/ç´¢å¼•æ•°é‡
+			1,                      // instanceCount å®ä¾‹æ•°é‡
+			m_MeshIndexOffsets[0],      // firstIndex   ç´¢å¼•çš„å¼€å§‹ä½ç½®
+			0,                      // vertexOffset é¡¶ç‚¹çš„åç§»é‡
+			0                       // firstInstance å®ä¾‹çš„å¼€å§‹ä½ç½®
 		);
 
 		dynamicOffset = sizeof(glm::mat4);
-		enableTexture = -1; //»æÖÆÍÃ×Ó£¬ÎŞÎÆÀí£¬Ë÷ÒıÓÃ - 1
+		enableTexture = -1; //ç»˜åˆ¶å…”å­ï¼Œæ— çº¹ç†ï¼Œç´¢å¼•ç”¨ - 1
 		commandBuffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			m_PipelineLayout,
@@ -1517,7 +1517,7 @@ private:
 			0,
 			enableTexture
 		);
-		commandBuffer.drawIndexed(  // »æÖÆ BUNNY_NUMBER ¸öÍÃ×ÓÄ£ĞÍ
+		commandBuffer.drawIndexed(  // ç»˜åˆ¶ BUNNY_NUMBER ä¸ªå…”å­æ¨¡å‹
 			m_MeshIndexCounts[1],
 			BUNNY_NUMBER,
 			m_MeshIndexOffsets[1],
@@ -1526,8 +1526,8 @@ private:
 		);
 
 		dynamicOffset = 2 * sizeof(glm::mat4);
-		enableTexture = 1;  // »æÖÆÕı·½Ìå£¬ÎÆÀíË÷ÒıÊÇ 1
-		commandBuffer.bindDescriptorSets( // ±£³ÖÄ£ĞÍ¾²Ö¹
+		enableTexture = 1;  // ç»˜åˆ¶æ­£æ–¹ä½“ï¼Œçº¹ç†ç´¢å¼•æ˜¯ 1
+		commandBuffer.bindDescriptorSets( // ä¿æŒæ¨¡å‹é™æ­¢
 			vk::PipelineBindPoint::eGraphics,
 			m_PipelineLayout,
 			0,
@@ -1545,7 +1545,7 @@ private:
 			1,
 			m_MeshIndexOffsets[2],
 			0,
-			BUNNY_NUMBER + 1  // ÊµÀıË÷Òı
+			BUNNY_NUMBER + 1  // å®ä¾‹ç´¢å¼•
 		);
 
 		commandBuffer.endRenderPass();
@@ -1865,9 +1865,9 @@ private:
 		int32_t mipWidth = texWidth;
 		int32_t mipHeight = texHeight;
 		for (uint32_t i = 1; i < mipLevels; i++) {
-			// 1. ½« i - 1 ¼¶±ğµÄÍ¼Ïñ²¼¾Ö×ª»»³É eTransferSrcOptimal £¬ÒÔ±ã×÷Îª´«ÊäÔ´
-			// 2. ´Ó i - 1 ¼¶±ğÖĞ blit ĞÂÍ¼Ïñµ½ i ¼¶±ğ
-			// 3. ½« i - 1 ¼¶±ğµÄÍ¼Ïñ²¼¾Ö×ª»»»Ø eShaderReadOnlyOptimal £¬ÒÔ±ãºóÃæ²ÉÑùÆ÷¶ÁÈ¡
+			// 1. å°† i - 1 çº§åˆ«çš„å›¾åƒå¸ƒå±€è½¬æ¢æˆ eTransferSrcOptimal ï¼Œä»¥ä¾¿ä½œä¸ºä¼ è¾“æº
+			// 2. ä» i - 1 çº§åˆ«ä¸­ blit æ–°å›¾åƒåˆ° i çº§åˆ«
+			// 3. å°† i - 1 çº§åˆ«çš„å›¾åƒå¸ƒå±€è½¬æ¢å› eShaderReadOnlyOptimal ï¼Œä»¥ä¾¿åé¢é‡‡æ ·å™¨è¯»å–
 			imageBarrier.subresourceRange.baseMipLevel = i - 1;
 			imageBarrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
 			imageBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
@@ -1882,10 +1882,10 @@ private:
 				imageBarrier
 			);
 
-			// ÉèÖÃ2DÍ¼Ïñ·ÅËõ·¶Î§ 
-			// ×óÉÏ½Ç [0, 0, 0] ---> [0, 0, 0]
-			// ÓÒÏÂ½Ç [width, height, 1] ---> [width/2, height/2, 1]
-			// Êµ¼ÊÉÏÊÇÒ»¸ö3D cube£¬zÖµµÄ·¶Î§Ò»Ö±Îª[0, 1)
+			// è®¾ç½®2Då›¾åƒæ”¾ç¼©èŒƒå›´ 
+			// å·¦ä¸Šè§’ [0, 0, 0] ---> [0, 0, 0]
+			// å³ä¸‹è§’ [width, height, 1] ---> [width/2, height/2, 1]
+			// å®é™…ä¸Šæ˜¯ä¸€ä¸ª3D cubeï¼Œzå€¼çš„èŒƒå›´ä¸€ç›´ä¸º[0, 1)
 			vk::ImageBlit imageBlit;
 			imageBlit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
 			imageBlit.srcOffsets[1] = vk::Offset3D{ mipWidth, mipHeight, 1 };
@@ -1966,7 +1966,7 @@ private:
 		startTime = currentTime;
 
 		m_DynamicUboMatrices[1] = glm::rotate(
-			m_DynamicUboMatrices[1],    // ÔÚÔ­ÏÈµÄ»ù´¡ÉÏĞı×ª
+			m_DynamicUboMatrices[1],    // åœ¨åŸå…ˆçš„åŸºç¡€ä¸Šæ—‹è½¬
 			glm::radians(time * 60.0f),
 			glm::vec3(0.0f, 1.0f, 0.0f)
 		);

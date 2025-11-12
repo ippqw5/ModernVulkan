@@ -7,7 +7,7 @@ layout(location = 0) out vec4 outColor;
 
 layout(push_constant) uniform PushConstants {
     int enableTexture;
-} pc; //ÒòÎªÍÆËÍ³£Á¿Ö»ÓĞÒ»¸öÊı¾İÇø£¬Ö±½ÓÊ¹ÓÃ push_constant ±ê¼Ç¼´¿É¡£ PushConstants ÊÇ×Ô¶¨ÒåµÄÀàĞÍÃû¡£
+} pc; //å› ä¸ºæ¨é€å¸¸é‡åªæœ‰ä¸€ä¸ªæ•°æ®åŒºï¼Œç›´æ¥ä½¿ç”¨ push_constant æ ‡è®°å³å¯ã€‚ PushConstants æ˜¯è‡ªå®šä¹‰çš„ç±»å‹åã€‚
 
 layout(set = 1, binding = 0) uniform sampler texSampler;
 layout(set = 1, binding = 1) uniform texture2D texImage[2];

@@ -13,7 +13,7 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 layout(location = 2) in vec2 inTexCoord;
 
-layout(location = 3) in mat4 inModel; //Ò»¸ö location ×î¶à 16 ×Ö½Ú£¬ËùÒÔ inModel Ö±½ÓÕ¼ÁË 4 ¸öÎ»ÖÃ¡£
+layout(location = 3) in mat4 inModel; //ä¸€ä¸ª location æœ€å¤š 16 å­—èŠ‚ï¼Œæ‰€ä»¥ inModel ç›´æ¥å äº† 4 ä¸ªä½ç½®ã€‚
 
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
