@@ -1,19 +1,6 @@
 ﻿# CMakeLists.txt
 cmake_minimum_required(VERSION 3.30.0)
 
-# USE_VCPKG variable is now controlled via CMakeSettings.json
-# Default to OFF if not specified
-if(NOT DEFINED USE_VCPKG)
-    set(USE_VCPKG OFF)
-endif()
-
-# Set vcpkg toolchain file before project() if using vcpkg
-if(USE_VCPKG)
-    # 需要设置环境变量VCPKG_ROOT
-    file(TO_CMAKE_PATH "$ENV{VCPKG_ROOT}" VCPKG_CMAKE_PATH)
-    set(CMAKE_TOOLCHAIN_FILE "${VCPKG_CMAKE_PATH}/scripts/buildsystems/vcpkg.cmake")
-endif()
-
 if (MSVC)
     # add /utf-8 option
     add_compile_options(/utf-8)
@@ -38,55 +25,32 @@ add_executable(${PROJECT_NAME}
     "src/application.cpp"
 )
 
-if(USE_VCPKG)
-    message(STATUS "Using vcpkg for third-party libraries")
+# 设置thirdparty路径
+set(THIRDPARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)
     
-    # 通过vcpkg导入第三方库
-    find_package(glfw3 CONFIG REQUIRED)
-    find_package(glm CONFIG REQUIRED)
-    find_package(Stb REQUIRED)
-    find_package(tinyobjloader CONFIG REQUIRED)
-    
-    # 包含目录
-    target_include_directories(${PROJECT_NAME} PRIVATE ${Stb_INCLUDE_DIR})
+# 添加包含目录
+target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include)
+target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/stb)
+target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/tinyobjloader)
 
-    # 链接库
-    target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
-    target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
-    target_link_libraries(${PROJECT_NAME} PRIVATE glfw)
-    target_link_libraries(${PROJECT_NAME} PRIVATE tinyobjloader::tinyobjloader)
+# 链接Vulkan
+target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
     
+# 链接GLFW库
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/lib/glfw/glfw3.lib)
+    # Add necessary Windows libraries for GLFW
+    target_link_libraries(${PROJECT_NAME} PRIVATE user32 gdi32 shell32)
 else()
-    message(STATUS "Using local thirdparty libraries")
-    
-    # 设置thirdparty路径
-    set(THIRDPARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)
-    
-    # 添加包含目录
-    target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/stb)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/include/tinyobjloader)
-
-    # 链接Vulkan
-    target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
-    
-    # 链接GLFW库
-    if(WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/lib/glfw/glfw3.lib)
-        # Add necessary Windows libraries for GLFW
-        target_link_libraries(${PROJECT_NAME} PRIVATE user32 gdi32 shell32)
-    else()
-        # For Linux/Mac, you might need different library names
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/lib/glfw/libglfw3.a)
-    endif()
-    
-    # GLM is header-only, so no linking needed
-
-    # STB is header-only, so no linking needed
-
-    # tinyobjloader is header-only, so no linking needed
-     
+    # For Linux/Mac, you might need different library names
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${THIRDPARTY_DIR}/lib/glfw/libglfw3.a)
 endif()
+    
+# GLM is header-only, so no linking needed
+
+# STB is header-only, so no linking needed
+
+# tinyobjloader is header-only, so no linking needed
 
 add_subdirectory(shaders)
 
